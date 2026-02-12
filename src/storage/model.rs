@@ -56,9 +56,9 @@ pub enum ChecklistHeadEvent {
 
 
 pub struct ItemEventMeta {
-    id: Uuid,
-    item_id: Uuid,
-    itc_event: EventTree,
+    pub id: Uuid,
+    pub item_id: Uuid,
+    pub itc_event: EventTree,
 }
 
 pub enum ChecklistItemEvent {
@@ -67,7 +67,6 @@ pub enum ChecklistItemEvent {
         head_id: Uuid,
         name: String,
         position: FractionalIndex,
-        checked: bool,
     },
     NameUpdate {
         meta: ItemEventMeta,
