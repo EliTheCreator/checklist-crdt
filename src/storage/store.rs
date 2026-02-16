@@ -3,7 +3,8 @@ use itc::Stamp;
 use uuid::Uuid;
 
 use super::storage_error::StorageError;
-use super::model::{ChecklistHeadEvent, ChecklistItemEvent};
+use super::model::checklist::head::ChecklistHeadEvent;
+use super::model::checklist::item::ChecklistItemEvent;
 
 
 pub trait Store {

@@ -2,7 +2,8 @@ use exn::Result;
 use itc::Stamp;
 use uuid::Uuid;
 
-use super::model::{ChecklistHeadEvent, ChecklistItemEvent};
+use super::model::checklist::head::ChecklistHeadEvent;
+use super::model::checklist::item::ChecklistItemEvent;
 use super::storage_error::StorageError;
 use super::store::Store;
 

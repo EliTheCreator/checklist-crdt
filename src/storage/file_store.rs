@@ -7,9 +7,9 @@ use itc::{EventTree, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
-use crate::storage::model::{HeadEventMeta, ItemEventMeta};
 
-use super::model::{ChecklistHeadEvent, ChecklistItemEvent};
+use super::model::checklist::head::{ChecklistHeadEvent, HeadEventMeta};
+use super::model::checklist::item::{ChecklistItemEvent, ItemEventMeta};
 use super::storage_error::StorageError;
 use super::store::Store;
 
@@ -646,7 +646,7 @@ mod tests {
             item_log_path,
         ).unwrap();
 
-        let meta = crate::storage::model::HeadEventMeta {
+        let meta = crate::storage::model::checklist::head::HeadEventMeta {
             id: uuid::Uuid::new_v4(),
             head_id: uuid::Uuid::new_v4(),
             itc_event: itc::EventTree::zero()
