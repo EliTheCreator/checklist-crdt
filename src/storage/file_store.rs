@@ -7,11 +7,11 @@ use itc::{EventTree, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
-
 use super::model::checklist::head::HeadEvent;
 use super::model::checklist::item::ItemEvent;
 use super::storage_error::StorageError;
 use super::store::Store;
+
 
 type RollbackFunction = Box<dyn FnMut(&mut FileStore) -> Result<(), StorageError>>;
 
@@ -492,7 +492,7 @@ impl Store for FileStore {
 
         let (offset, _) = self.head_log_file.event_positions.remove(index);
 
-        let remainder = if index < self.head_log_file.event_positions.len() {
+        let remainder = (index < self.head_log_file.event_positions.len()).then_some({
             let next_offset = self.head_log_file.event_positions[index].0;
             self.head_log_file.file.seek(SeekFrom::Start(next_offset))
                 .or_raise(|| StorageError("".into()))?;
@@ -500,10 +500,8 @@ impl Store for FileStore {
             let mut buffer = String::new();
             self.head_log_file.file.read_to_string(&mut buffer)
                 .or_raise(|| StorageError("".into()))?;
-            Some((buffer, next_offset-offset))
-        } else {
-            None
-        };
+            (buffer, next_offset-offset)
+        });
 
         self.head_log_file.file.set_len(offset)
             .or_raise(|| StorageError(format!("")))?;
@@ -551,7 +549,7 @@ impl Store for FileStore {
 
         let (offset, _) = self.item_log_file.event_positions.remove(index);
 
-        let remainder = if index < self.item_log_file.event_positions.len() {
+        let remainder = (index < self.item_log_file.event_positions.len()).then_some({
             let next_offset = self.item_log_file.event_positions[index].0;
             self.item_log_file.file.seek(SeekFrom::Start(next_offset))
                 .or_raise(|| StorageError("".into()))?;
@@ -559,10 +557,8 @@ impl Store for FileStore {
             let mut buffer = String::new();
             self.item_log_file.file.read_to_string(&mut buffer)
                 .or_raise(|| StorageError("".into()))?;
-            Some((buffer, next_offset-offset))
-        } else {
-            None
-        };
+            (buffer, next_offset-offset)
+        });
 
         self.item_log_file.file.set_len(offset)
             .or_raise(|| StorageError(format!("")))?;
