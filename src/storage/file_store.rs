@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::str::{FromStr, Split};
 
 use exn::{bail, Result, ResultExt};
@@ -17,44 +17,78 @@ type RollbackFunction = Box<dyn FnMut(&mut FileStore) -> Result<(), StorageError
 
 struct EventLogFile {
     file: File,
-    event_positions: Option<Vec<(usize, Uuid)>>
+    event_positions: Vec<(u64, Uuid)>,
 }
 
 
 pub struct FileStore {
     stamp_file: File,
-    event_log_file: File,
-    newlines: Vec<usize>,
+    head_log_file: EventLogFile,
+    item_log_file: EventLogFile,
     in_transaction: bool,
     rollback_stack: Vec<Box<dyn FnMut(&mut FileStore) -> Result<(), StorageError>>>,
 }
 
 impl FileStore {
-    pub fn new(stamp_path: &str, event_log_path: &str)  -> Result<Self, StorageError> {
+    pub fn new(
+        stamp_path: &str,
+        head_log_path: &str,
+        item_log_path: &str,
+    )  -> Result<Self, StorageError> {
         let stamp_file = OpenOptions::new()
             .create(true)
             .write(true)
             .open(stamp_path)
             .or_raise(|| StorageError(format!("failed to open stamp file at {stamp_path}")))?;
 
-        let mut event_log_file = OpenOptions::new()
+        let head_log_file = OpenOptions::new()
             .create(true)
             .write(true)
-            .open(event_log_path)
-            .or_raise(|| StorageError(format!("failed to open event log file at {event_log_path}")))?;
+            .open(head_log_path)
+            .or_raise(|| StorageError(format!("failed to open event log file at {head_log_path}")))?;
 
-        let mut contents = String::new();
-        event_log_file.read_to_string(&mut contents)
-            .or_raise(|| StorageError("failed to read event log file".into()))?;
+        let mut offset: u64 = 0;
+        let head_positions: Vec<(u64, Uuid)> = FileStore::load_all_head_events_with_length(&head_log_file)?
+            .into_iter()
+            .map(|head| {
+                let cur_offset = offset;
+                offset += head.0+1;
+                let uuid = match head.1 {
+                    ChecklistHeadEvent::Creation { meta, template_id, name, description } => meta.head_id,
+                    ChecklistHeadEvent::NameUpdate { meta, name } => meta.head_id,
+                    ChecklistHeadEvent::DescriptionUpdate { meta, description } => meta.head_id,
+                    ChecklistHeadEvent::CompletedUpdate { meta, completed } => meta.head_id,
+                    ChecklistHeadEvent::Deletion { meta } => meta.head_id,
+                };
+                (cur_offset, uuid)
+            }).collect();
 
-        let newlines = contents.match_indices('\n')
-            .map(|pair| pair.0)
-            .collect();
+        let item_log_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(item_log_path)
+            .or_raise(|| StorageError(format!("failed to open event log file at {item_log_path}")))?;
+
+        let mut offset: u64 = 0;
+        let item_positions: Vec<(u64, Uuid)> = FileStore::load_all_item_events_with_length(&item_log_file)?
+            .into_iter()
+            .map(|item| {
+                let cur_offset = offset;
+                offset += item.0+1;
+                let uuid = match item.1 {
+                    ChecklistItemEvent::Creation { meta, head_id, name, position } => meta.item_id,
+                    ChecklistItemEvent::NameUpdate { meta, name } => meta.item_id,
+                    ChecklistItemEvent::PositionUpdate { meta, position } => meta.item_id,
+                    ChecklistItemEvent::CheckedUpdate { meta, checked } => meta.item_id,
+                    ChecklistItemEvent::Deletion { meta } => meta.item_id,
+                };
+                (cur_offset, uuid)
+            }).collect();
 
         let file_store = FileStore {
             stamp_file: stamp_file,
-            event_log_file: event_log_file,
-            newlines: newlines,
+            head_log_file: EventLogFile { file: head_log_file, event_positions: head_positions },
+            item_log_file: EventLogFile { file: item_log_file, event_positions: item_positions },
             in_transaction: false,
             rollback_stack: Vec::new(),
         };
@@ -217,9 +251,9 @@ impl FileStore {
         Ok(ChecklistHeadEvent::Deletion { meta })
     }
 
-    fn load_head_event(line: &str) -> Result<ChecklistHeadEvent, StorageError> {
+    fn load_head_event(line: &str) -> Result<(u64, ChecklistHeadEvent), StorageError> {
         let mut parts = line.split(" ");
-        match parts.next() {
+        let head = match parts.next() {
             Some("Creation") => FileStore::parse_head_creation(&mut parts),
             Some("NameUpdate") => FileStore::parse_head_name_update(&mut parts),
             Some("DescriptionUpdate") => FileStore::parse_head_description_update(&mut parts),
@@ -227,7 +261,21 @@ impl FileStore {
             Some("Deletion") => FileStore::parse_head_deletion(&mut parts),
             Some(_) => bail!(StorageError("".into())),
             None => bail!(StorageError("".into())),
-        }
+        }?;
+        Ok((line.len() as u64, head))
+    }
+
+    fn load_all_head_events_with_length(file: &File) -> Result<Vec<(u64, ChecklistHeadEvent)>, StorageError> {
+        BufReader::new(file)
+            .lines()
+            .map(|line| {
+                match line {
+                    Ok(l) => FileStore::load_head_event(&l),
+                    Err(e) => Err(e).or_raise(|| StorageError("".into())),
+                }
+            })
+            .collect::<Result<Vec<(u64, ChecklistHeadEvent)>, StorageError>>()
+            .or_raise(|| StorageError("".into()))
     }
 
     fn parse_item_event_meta(iter: &mut Split<'_, &str>) -> Result<ItemEventMeta, StorageError> {
@@ -381,7 +429,7 @@ impl FileStore {
         Ok(ChecklistItemEvent::Deletion { meta })
     }
 
-    fn load_item_event(line: &str) -> Result<(usize, ChecklistItemEvent), StorageError> {
+    fn load_item_event(line: &str) -> Result<(u64, ChecklistItemEvent), StorageError> {
         let mut parts = line.split(" ");
         let event = match parts.next() {
             Some("Creation") => FileStore::parse_item_creation(&mut parts),
@@ -392,11 +440,11 @@ impl FileStore {
             Some(_) => bail!(StorageError("".into())),
             None => bail!(StorageError("".into())),
         }?;
-        Ok((line.len(), event))
+        Ok((line.len() as u64, event))
     }
 
-    fn load_all_item_events_with_length(&self) -> Result<Vec<(usize, ChecklistItemEvent)>, StorageError> {
-        BufReader::new(&self.event_log_file)
+    fn load_all_item_events_with_length(file: &File) -> Result<Vec<(u64, ChecklistItemEvent)>, StorageError> {
+        BufReader::new(file)
             .lines()
             .map(|line| {
                 match line {
@@ -404,7 +452,7 @@ impl FileStore {
                     Err(e) => Err(e).or_raise(|| StorageError("".into())),
                 }
             })
-            .collect::<Result<Vec<(usize, ChecklistItemEvent)>, StorageError>>()
+            .collect::<Result<Vec<(u64, ChecklistItemEvent)>, StorageError>>()
             .or_raise(|| StorageError("".into()))
     }
 }
@@ -464,66 +512,120 @@ impl Store for FileStore {
 
     fn save_head_event(&mut self, event: &ChecklistHeadEvent) -> Result<(), StorageError> {
         use ChecklistHeadEvent::*;
-        let line = match event {
-            Creation { meta, template_id, name, description }  => self.save_head_creation(event),
-            NameUpdate { meta, name } => self.save_head_name_update(event),
-            DescriptionUpdate { meta, description } => self.save_head_description_update(event),
-            CompletedUpdate { meta, completed } => self.save_head_completed_update(event),
-            Deletion { meta } => self.save_head_deletion(event),
+        let (line, head_id) = match event {
+            Creation { meta, template_id, name, description }  => self.save_head_creation(event).and_then(|s| Some((s, meta.head_id.clone()))),
+            NameUpdate { meta, name } => self.save_head_name_update(event).and_then(|s| Some((s, meta.head_id.clone()))),
+            DescriptionUpdate { meta, description } => self.save_head_description_update(event).and_then(|s| Some((s, meta.head_id.clone()))),
+            CompletedUpdate { meta, completed } => self.save_head_completed_update(event).and_then(|s| Some((s, meta.head_id.clone()))),
+            Deletion { meta } => self.save_head_deletion(event).and_then(|s| Some((s, meta.head_id.clone()))),
         }.ok_or_else(|| StorageError("".into()))?;
 
-        self.event_log_file.write(line.as_bytes())
+        self.head_log_file.file.write(line.as_bytes())
             .or_raise(|| StorageError(format!("failed to write line to file")))?;
+
+        self.head_log_file.event_positions.push((line.len() as u64, head_id));
         Ok(())
     }
 
     fn load_all_head_events(&self) -> Result<Vec<ChecklistHeadEvent>, StorageError> {
-        BufReader::new(&self.event_log_file)
-            .lines()
-            .map(|line| {
-                match line {
-                    Ok(l) => FileStore::load_head_event(&l),
-                    Err(e) => Err(e).or_raise(|| StorageError("".into())),
-                }
-            })
-            .collect::<Result<Vec<ChecklistHeadEvent>, StorageError>>()
-            .or_raise(|| StorageError("".into()))
+        Ok(FileStore::load_all_head_events_with_length(&self.head_log_file.file)?
+            .into_iter().map(|t| t.1)
+            .collect()
+        )
     }
 
     fn delete_head_event(&mut self, head_id: &uuid::Uuid) -> Result<bool, StorageError> {
-        todo!()
+        let index = match self.head_log_file.event_positions.binary_search_by_key(head_id, |i| i.1) {
+            Ok(i) => i,
+            Err(_) => return Ok(false),
+        };
+
+        let (offset, _) = self.head_log_file.event_positions.remove(index);
+
+        let remainder = if index < self.head_log_file.event_positions.len() {
+            let next_offset = self.head_log_file.event_positions[index].0;
+            self.head_log_file.file.seek(SeekFrom::Start(next_offset))
+                .or_raise(|| StorageError("".into()))?;
+
+            let mut buffer = String::new();
+            self.head_log_file.file.read_to_string(&mut buffer)
+                .or_raise(|| StorageError("".into()))?;
+            Some((buffer, next_offset-offset))
+        } else {
+            None
+        };
+
+        self.head_log_file.file.set_len(offset)
+            .or_raise(|| StorageError(format!("")))?;
+
+        if let Some((remainder, diff)) = remainder {
+            self.head_log_file.file.write(remainder.as_bytes())
+                .or_raise(|| StorageError(format!("")))?;
+            self.head_log_file.event_positions.iter_mut()
+                .skip(index)
+                .for_each(|tuple| tuple.0 -= diff);
+        };
+
+        Ok(true)
     }
 
     fn save_item_event(&mut self, event: &ChecklistItemEvent) -> Result<(), StorageError> {
         use ChecklistItemEvent::*;
-        let line = match event {
-            Creation {meta, head_id, name, position }  => self.save_item_creation(event),
-            NameUpdate { meta, name } => self.save_item_name_update(event),
-            PositionUpdate { meta, position } => self.save_item_position_update(event),
-            CheckedUpdate { meta, checked } => self.save_item_checked_update(event),
-            Deletion { meta } => self.save_item_deletion(event),
+        let (line, item_id) = match event {
+            Creation {meta, head_id, name, position }  => self.save_item_creation(event).and_then(|s| Some((s, meta.item_id.clone()))),
+            NameUpdate { meta, name } => self.save_item_name_update(event).and_then(|s| Some((s, meta.item_id.clone()))),
+            PositionUpdate { meta, position } => self.save_item_position_update(event).and_then(|s| Some((s, meta.item_id.clone()))),
+            CheckedUpdate { meta, checked } => self.save_item_checked_update(event).and_then(|s| Some((s, meta.item_id.clone()))),
+            Deletion { meta } => self.save_item_deletion(event).and_then(|s| Some((s, meta.item_id.clone()))),
         }.ok_or_else(|| StorageError("".into()))?;
 
-        self.event_log_file.write(line.as_bytes())
+        self.item_log_file.file.write(line.as_bytes())
             .or_raise(|| StorageError(format!("failed to write line to file")))?;
+
+        self.item_log_file.event_positions.push((line.len() as u64, item_id));
         Ok(())
     }
 
     fn load_all_item_events(&self) -> Result<Vec<ChecklistItemEvent>, StorageError> {
-        BufReader::new(&self.event_log_file)
-            .lines()
-            .map(|line| {
-                match line {
-                    Ok(l) => FileStore::load_item_event(&l),
-                    Err(e) => Err(e).or_raise(|| StorageError("".into())),
-                }
-            })
-            .collect::<Result<Vec<ChecklistItemEvent>, StorageError>>()
-            .or_raise(|| StorageError("".into()))
+        Ok(FileStore::load_all_item_events_with_length(&self.item_log_file.file)?
+            .into_iter().map(|t| t.1)
+            .collect()
+        )
     }
 
     fn delete_item_event(&mut self, item_id: &uuid::Uuid) -> Result<bool, StorageError> {
-        todo!()
+        let index = match self.item_log_file.event_positions.binary_search_by_key(item_id, |i| i.1) {
+            Ok(i) => i,
+            Err(_) => return Ok(false),
+        };
+
+        let (offset, _) = self.item_log_file.event_positions.remove(index);
+
+        let remainder = if index < self.item_log_file.event_positions.len() {
+            let next_offset = self.item_log_file.event_positions[index].0;
+            self.item_log_file.file.seek(SeekFrom::Start(next_offset))
+                .or_raise(|| StorageError("".into()))?;
+
+            let mut buffer = String::new();
+            self.item_log_file.file.read_to_string(&mut buffer)
+                .or_raise(|| StorageError("".into()))?;
+            Some((buffer, next_offset-offset))
+        } else {
+            None
+        };
+
+        self.item_log_file.file.set_len(offset)
+            .or_raise(|| StorageError(format!("")))?;
+
+        if let Some((remainder, diff)) = remainder {
+            self.item_log_file.file.write(remainder.as_bytes())
+                .or_raise(|| StorageError(format!("")))?;
+            self.item_log_file.event_positions.iter_mut()
+                .skip(index)
+                .for_each(|tuple| tuple.0 -= diff);
+        };
+
+        Ok(true)
     }
 }
 
@@ -536,9 +638,13 @@ mod tests {
     #[test]
     fn save_to_file() {
         let stamp_path = "./stamp.txt";
-        let event_log_path = "./event_log.txt";
-        let mut file_store = FileStore::new(stamp_path, event_log_path).unwrap();
-
+        let head_log_path = "./head_log.txt";
+        let item_log_path = "./item_log.txt";
+        let mut file_store = FileStore::new(
+            stamp_path,
+            head_log_path,
+            item_log_path,
+        ).unwrap();
 
         let meta = crate::storage::model::HeadEventMeta {
             id: uuid::Uuid::new_v4(),
