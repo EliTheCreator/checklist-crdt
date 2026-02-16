@@ -4,34 +4,43 @@ use uuid::Uuid;
 
 
 #[derive(Clone)]
-pub struct ItemEventMeta {
-    pub id: Uuid,
-    pub item_id: Uuid,
-    pub itc_event: EventTree,
-}
-
-
-#[derive(Clone)]
-pub enum ChecklistItemEvent {
+pub enum ItemEvent {
     Creation {
-        meta: ItemEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
         head_id: Uuid,
         name: String,
         position: FractionalIndex,
     },
     NameUpdate {
-        meta: ItemEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
         name: String,
     },
     PositionUpdate {
-        meta: ItemEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
         position: FractionalIndex,
     },
     CheckedUpdate {
-        meta: ItemEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
         checked: bool,
     },
     Deletion {
-        meta: ItemEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
     },
+}
+
+impl ItemEvent {
+    pub fn id(&self) -> &Uuid {
+        match self {
+            ItemEvent::Creation { id, itc_event, head_id, name, position } => id,
+            ItemEvent::NameUpdate { id, itc_event, name } => id,
+            ItemEvent::PositionUpdate { id, itc_event, position } => id,
+            ItemEvent::CheckedUpdate { id, itc_event, checked } => id,
+            ItemEvent::Deletion { id, itc_event } => id,
+        }
+    }
 }

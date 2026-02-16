@@ -1,32 +1,44 @@
 use itc::EventTree;
 use uuid::Uuid;
 
-pub struct HeadEventMeta {
-    pub id: Uuid,
-    pub head_id: Uuid,
-    pub itc_event: EventTree,
-}
 
-pub enum ChecklistHeadEvent {
+pub enum HeadEvent {
     Creation {
-        meta: HeadEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
         template_id: Option<Uuid>,
         name: String,
         description: Option<String>,
     },
     NameUpdate {
-        meta: HeadEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
         name: String,
     },
     DescriptionUpdate {
-        meta: HeadEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
         description: String,
     },
     CompletedUpdate {
-        meta: HeadEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
         completed: bool,
     },
     Deletion {
-        meta: HeadEventMeta,
+        id: Uuid,
+        itc_event: EventTree,
     },
+}
+
+impl HeadEvent {
+    pub fn id(&self) -> &Uuid {
+        match self {
+            HeadEvent::Creation { id, itc_event, template_id, name, description } => id,
+            HeadEvent::NameUpdate { id, itc_event, name } => id,
+            HeadEvent::DescriptionUpdate { id, itc_event, description } => id,
+            HeadEvent::CompletedUpdate { id, itc_event, completed } => id,
+            HeadEvent::Deletion { id, itc_event } => id,
+        }
+    }
 }

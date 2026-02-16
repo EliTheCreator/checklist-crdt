@@ -8,8 +8,8 @@ use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
 
-use super::model::checklist::head::{ChecklistHeadEvent, HeadEventMeta};
-use super::model::checklist::item::{ChecklistItemEvent, ItemEventMeta};
+use super::model::checklist::head::HeadEvent;
+use super::model::checklist::item::ItemEvent;
 use super::storage_error::StorageError;
 use super::store::Store;
 
@@ -53,13 +53,7 @@ impl FileStore {
             .map(|head| {
                 let cur_offset = offset;
                 offset += head.0+1;
-                let uuid = match head.1 {
-                    ChecklistHeadEvent::Creation { meta, template_id, name, description } => meta.head_id,
-                    ChecklistHeadEvent::NameUpdate { meta, name } => meta.head_id,
-                    ChecklistHeadEvent::DescriptionUpdate { meta, description } => meta.head_id,
-                    ChecklistHeadEvent::CompletedUpdate { meta, completed } => meta.head_id,
-                    ChecklistHeadEvent::Deletion { meta } => meta.head_id,
-                };
+                let uuid = head.1.id().clone();
                 (cur_offset, uuid)
             }).collect();
 
@@ -75,13 +69,7 @@ impl FileStore {
             .map(|item| {
                 let cur_offset = offset;
                 offset += item.0+1;
-                let uuid = match item.1 {
-                    ChecklistItemEvent::Creation { meta, head_id, name, position } => meta.item_id,
-                    ChecklistItemEvent::NameUpdate { meta, name } => meta.item_id,
-                    ChecklistItemEvent::PositionUpdate { meta, position } => meta.item_id,
-                    ChecklistItemEvent::CheckedUpdate { meta, checked } => meta.item_id,
-                    ChecklistItemEvent::Deletion { meta } => meta.item_id,
-                };
+                let uuid = item.1.id().clone();
                 (cur_offset, uuid)
             }).collect();
 
@@ -96,13 +84,8 @@ impl FileStore {
         Ok(file_store)
     }
 
-    fn parse_head_event_meta(iter: &mut Split<'_, &str>) -> Result<HeadEventMeta, StorageError> {
+    fn parse_event_meta(iter: &mut Split<'_, &str>) -> Result<(Uuid, EventTree), StorageError> {
         let id = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
-            .parse::<Uuid>()
-            .map_err(|_| StorageError("".into()))?;
-
-        let head_id = iter.next()
             .ok_or_else(|| StorageError("".into()))?
             .parse::<Uuid>()
             .map_err(|_| StorageError("".into()))?;
@@ -112,16 +95,15 @@ impl FileStore {
             .parse::<EventTree>()
             .map_err(|_| StorageError("".into()))?;
 
-        Ok(HeadEventMeta { id, head_id, itc_event })
+        Ok((id, itc_event))
     }
 
-    fn save_head_creation(&mut self, event: &ChecklistHeadEvent) -> Option<String> {
-        if let ChecklistHeadEvent::Creation { meta, template_id, name, description } = event {
+    fn save_head_creation(&mut self, event: &HeadEvent) -> Option<String> {
+        if let HeadEvent::Creation { id, itc_event, template_id, name, description } = event {
             Some(format!(
-                "Creation {} {} {} {} {} {}",
-                meta.id,
-                meta.head_id,
-                meta.itc_event,
+                "Creation {} {} {} {} {}",
+                id,
+                itc_event,
                 template_id.unwrap_or(Uuid::nil()),
                 name,
                 description.clone().unwrap_or(String::new()),
@@ -131,19 +113,15 @@ impl FileStore {
         }
     }
 
-    fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<ChecklistHeadEvent, StorageError> {
-        let meta = FileStore::parse_head_event_meta(iter)
+    fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let template_id = iter.next()
             .ok_or_else(|| StorageError("".into()))?
             .parse::<Uuid>()
             .map_err(|_| StorageError("".into()))?;
-        let template_id = if template_id.is_nil() {
-            None
-        } else {
-            Some(template_id)
-        };
+        let template_id = (!template_id.is_nil()).then_some(template_id);
 
         let name = iter.next()
             .ok_or_else(|| StorageError("".into()))?
@@ -152,16 +130,15 @@ impl FileStore {
         let description = iter.next()
             .map(|s| s.to_string());
 
-        Ok(ChecklistHeadEvent::Creation { meta, template_id, name, description })
+        Ok(HeadEvent::Creation { id, itc_event, template_id, name, description })
     }
 
-    fn save_head_name_update(&mut self, event: &ChecklistHeadEvent) -> Option<String> {
-        if let ChecklistHeadEvent::NameUpdate { meta, name } = event {
+    fn save_head_name_update(&mut self, event: &HeadEvent) -> Option<String> {
+        if let HeadEvent::NameUpdate { id, itc_event, name } = event {
             Some(format!(
-                "NameUpdate {} {} {} {}",
-                meta.id,
-                meta.head_id,
-                meta.itc_event,
+                "NameUpdate {} {} {}",
+                id,
+                itc_event,
                 name,
             ))
         } else {
@@ -169,24 +146,23 @@ impl FileStore {
         }
     }
 
-    fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<ChecklistHeadEvent, StorageError> {
-        let meta = FileStore::parse_head_event_meta(iter)
+    fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let name = iter.next()
             .ok_or_else(|| StorageError("".into()))?
             .to_string();
 
-        Ok(ChecklistHeadEvent::NameUpdate { meta, name })
+        Ok(HeadEvent::NameUpdate { id, itc_event, name })
     }
 
-    fn save_head_description_update(&mut self, event: &ChecklistHeadEvent) -> Option<String> {
-        if let ChecklistHeadEvent::DescriptionUpdate { meta, description } = event {
+    fn save_head_description_update(&mut self, event: &HeadEvent) -> Option<String> {
+        if let HeadEvent::DescriptionUpdate { id, itc_event, description } = event {
             Some(format!(
-                "DescriptionUpdate {} {} {} {}",
-                meta.id,
-                meta.head_id,
-                meta.itc_event,
+                "DescriptionUpdate {} {} {}",
+                id,
+                itc_event,
                 description,
             ))
         } else {
@@ -194,24 +170,23 @@ impl FileStore {
         }
     }
 
-    fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<ChecklistHeadEvent, StorageError> {
-        let meta = FileStore::parse_head_event_meta(iter)
+    fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let description = iter.next()
             .ok_or_else(|| StorageError("".into()))?
             .to_string();
 
-        Ok(ChecklistHeadEvent::DescriptionUpdate { meta, description })
+        Ok(HeadEvent::DescriptionUpdate { id, itc_event, description })
     }
 
-    fn save_head_completed_update(&mut self, event: &ChecklistHeadEvent) -> Option<String> {
-        if let ChecklistHeadEvent::CompletedUpdate { meta, completed } = event {
+    fn save_head_completed_update(&mut self, event: &HeadEvent) -> Option<String> {
+        if let HeadEvent::CompletedUpdate { id, itc_event, completed } = event {
             Some(format!(
-                "CompletedUpdate {} {} {} {}",
-                meta.id,
-                meta.head_id,
-                meta.itc_event,
+                "CompletedUpdate {} {} {}",
+                id,
+                itc_event,
                 completed,
             ))
         } else {
@@ -219,8 +194,8 @@ impl FileStore {
         }
     }
 
-    fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<ChecklistHeadEvent, StorageError> {
-        let meta = FileStore::parse_head_event_meta(iter)
+    fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let completed = iter.next()
@@ -228,30 +203,29 @@ impl FileStore {
             .parse::<bool>()
             .map_err(|_| StorageError("".into()))?;
 
-        Ok(ChecklistHeadEvent::CompletedUpdate { meta, completed })
+        Ok(HeadEvent::CompletedUpdate { id, itc_event, completed })
     }
 
-    fn save_head_deletion(&mut self, event: &ChecklistHeadEvent) -> Option<String> {
-        if let ChecklistHeadEvent::Deletion { meta } = event {
+    fn save_head_deletion(&mut self, event: &HeadEvent) -> Option<String> {
+        if let HeadEvent::Deletion { id, itc_event } = event {
             Some(format!(
-                "Deletion {} {} {}",
-                meta.id,
-                meta.head_id,
-                meta.itc_event,
+                "Deletion {} {}",
+                id,
+                itc_event,
             ))
         } else {
             None
         }
     }
 
-    fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<ChecklistHeadEvent, StorageError> {
-        let meta = FileStore::parse_head_event_meta(iter)
+    fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
-        Ok(ChecklistHeadEvent::Deletion { meta })
+        Ok(HeadEvent::Deletion { id, itc_event })
     }
 
-    fn load_head_event(line: &str) -> Result<(u64, ChecklistHeadEvent), StorageError> {
+    fn load_head_event(line: &str) -> Result<(u64, HeadEvent), StorageError> {
         let mut parts = line.split(" ");
         let head = match parts.next() {
             Some("Creation") => FileStore::parse_head_creation(&mut parts),
@@ -265,7 +239,7 @@ impl FileStore {
         Ok((line.len() as u64, head))
     }
 
-    fn load_all_head_events_with_length(file: &File) -> Result<Vec<(u64, ChecklistHeadEvent)>, StorageError> {
+    fn load_all_head_events_with_length(file: &File) -> Result<Vec<(u64, HeadEvent)>, StorageError> {
         BufReader::new(file)
             .lines()
             .map(|line| {
@@ -274,36 +248,16 @@ impl FileStore {
                     Err(e) => Err(e).or_raise(|| StorageError("".into())),
                 }
             })
-            .collect::<Result<Vec<(u64, ChecklistHeadEvent)>, StorageError>>()
+            .collect::<Result<Vec<(u64, HeadEvent)>, StorageError>>()
             .or_raise(|| StorageError("".into()))
     }
 
-    fn parse_item_event_meta(iter: &mut Split<'_, &str>) -> Result<ItemEventMeta, StorageError> {
-        let id = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
-            .parse::<Uuid>()
-            .map_err(|_| StorageError("".into()))?;
-
-        let item_id = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
-            .parse::<Uuid>()
-            .map_err(|_| StorageError("".into()))?;
-
-        let itc_event = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
-            .parse::<EventTree>()
-            .map_err(|_| StorageError("".into()))?;
-
-        Ok(ItemEventMeta { id, item_id, itc_event })
-    }
-
-    fn save_item_creation(&mut self, event: &ChecklistItemEvent) -> Option<String> {
-        if let ChecklistItemEvent::Creation { meta, head_id, name, position } = event {
+    fn save_item_creation(&mut self, event: &ItemEvent) -> Option<String> {
+        if let ItemEvent::Creation { id, itc_event, head_id, name, position } = event {
             Some(format!(
-                "Creation {} {} {} {} {} {}",
-                meta.id,
-                meta.item_id,
-                meta.itc_event,
+                "Creation {} {} {} {} {}",
+                id,
+                itc_event,
                 head_id,
                 name,
                 position,
@@ -313,8 +267,8 @@ impl FileStore {
         }
     }
 
-    fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<ChecklistItemEvent, StorageError> {
-        let meta = FileStore::parse_item_event_meta(iter)
+    fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let head_id = iter.next()
@@ -330,16 +284,15 @@ impl FileStore {
             .ok_or_else(|| StorageError("".into()))?;
         let position = FractionalIndex::from_hex_string(position);
 
-        Ok(ChecklistItemEvent::Creation { meta, head_id, name, position })
+        Ok(ItemEvent::Creation { id, itc_event, head_id, name, position })
     }
 
-    fn save_item_name_update(&mut self, event: &ChecklistItemEvent) -> Option<String> {
-        if let ChecklistItemEvent::NameUpdate { meta, name } = event {
+    fn save_item_name_update(&mut self, event: &ItemEvent) -> Option<String> {
+        if let ItemEvent::NameUpdate { id, itc_event, name } = event {
             Some(format!(
-                "NameUpdate {} {} {} {}",
-                meta.id,
-                meta.item_id,
-                meta.itc_event,
+                "NameUpdate {} {} {}",
+                id,
+                itc_event,
                 name,
             ))
         } else {
@@ -347,24 +300,23 @@ impl FileStore {
         }
     }
 
-    fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ChecklistItemEvent, StorageError> {
-        let meta = FileStore::parse_item_event_meta(iter)
+    fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let name = iter.next()
             .ok_or_else(|| StorageError("".into()))?
             .to_string();
 
-        Ok(ChecklistItemEvent::NameUpdate { meta, name })
+        Ok(ItemEvent::NameUpdate { id, itc_event, name })
     }
 
-    fn save_item_position_update(&mut self, event: &ChecklistItemEvent) -> Option<String> {
-        if let ChecklistItemEvent::PositionUpdate { meta, position } = event {
+    fn save_item_position_update(&mut self, event: &ItemEvent) -> Option<String> {
+        if let ItemEvent::PositionUpdate { id, itc_event, position } = event {
             Some(format!(
-                "PositionUpdate {} {} {} {}",
-                meta.id,
-                meta.item_id,
-                meta.itc_event,
+                "PositionUpdate {} {} {}",
+                id,
+                itc_event,
                 position,
             ))
         } else {
@@ -372,24 +324,23 @@ impl FileStore {
         }
     }
 
-    fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ChecklistItemEvent, StorageError> {
-        let meta = FileStore::parse_item_event_meta(iter)
+    fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let position = iter.next()
             .ok_or_else(|| StorageError("".into()))?;
         let position = FractionalIndex::from_hex_string(position);
 
-        Ok(ChecklistItemEvent::PositionUpdate { meta, position })
+        Ok(ItemEvent::PositionUpdate { id, itc_event, position })
     }
 
-    fn save_item_checked_update(&mut self, event: &ChecklistItemEvent) -> Option<String> {
-        if let ChecklistItemEvent::CheckedUpdate { meta, checked } = event {
+    fn save_item_checked_update(&mut self, event: &ItemEvent) -> Option<String> {
+        if let ItemEvent::CheckedUpdate { id, itc_event, checked } = event {
             Some(format!(
-                "CheckedUpdate {} {} {} {}",
-                meta.id,
-                meta.item_id,
-                meta.itc_event,
+                "CheckedUpdate {} {} {}",
+                id,
+                itc_event,
                 checked,
             ))
         } else {
@@ -397,8 +348,8 @@ impl FileStore {
         }
     }
 
-    fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<ChecklistItemEvent, StorageError> {
-        let meta = FileStore::parse_item_event_meta(iter)
+    fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let checked = iter.next()
@@ -406,30 +357,29 @@ impl FileStore {
             .parse::<bool>()
             .map_err(|_| StorageError("".into()))?;
 
-        Ok(ChecklistItemEvent::CheckedUpdate { meta, checked })
+        Ok(ItemEvent::CheckedUpdate { id, itc_event, checked })
     }
 
-    fn save_item_deletion(&mut self, event: &ChecklistItemEvent) -> Option<String> {
-        if let ChecklistItemEvent::Deletion { meta } = event {
+    fn save_item_deletion(&mut self, event: &ItemEvent) -> Option<String> {
+        if let ItemEvent::Deletion { id, itc_event } = event {
             Some(format!(
-                "Deletion {} {} {}",
-                meta.id,
-                meta.item_id,
-                meta.itc_event,
+                "Deletion {} {}",
+                id,
+                itc_event,
             ))
         } else {
             None
         }
     }
 
-    fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<ChecklistItemEvent, StorageError> {
-        let meta = FileStore::parse_item_event_meta(iter)
+    fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
+        let (id, itc_event) = FileStore::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
-        Ok(ChecklistItemEvent::Deletion { meta })
+        Ok(ItemEvent::Deletion { id, itc_event })
     }
 
-    fn load_item_event(line: &str) -> Result<(u64, ChecklistItemEvent), StorageError> {
+    fn load_item_event(line: &str) -> Result<(u64, ItemEvent), StorageError> {
         let mut parts = line.split(" ");
         let event = match parts.next() {
             Some("Creation") => FileStore::parse_item_creation(&mut parts),
@@ -443,7 +393,7 @@ impl FileStore {
         Ok((line.len() as u64, event))
     }
 
-    fn load_all_item_events_with_length(file: &File) -> Result<Vec<(u64, ChecklistItemEvent)>, StorageError> {
+    fn load_all_item_events_with_length(file: &File) -> Result<Vec<(u64, ItemEvent)>, StorageError> {
         BufReader::new(file)
             .lines()
             .map(|line| {
@@ -452,7 +402,7 @@ impl FileStore {
                     Err(e) => Err(e).or_raise(|| StorageError("".into())),
                 }
             })
-            .collect::<Result<Vec<(u64, ChecklistItemEvent)>, StorageError>>()
+            .collect::<Result<Vec<(u64, ItemEvent)>, StorageError>>()
             .or_raise(|| StorageError("".into()))
     }
 }
@@ -510,32 +460,32 @@ impl Store for FileStore {
         Ok(stamp)
     }
 
-    fn save_head_event(&mut self, event: &ChecklistHeadEvent) -> Result<(), StorageError> {
-        use ChecklistHeadEvent::*;
-        let (line, head_id) = match event {
-            Creation { meta, template_id, name, description }  => self.save_head_creation(event).and_then(|s| Some((s, meta.head_id.clone()))),
-            NameUpdate { meta, name } => self.save_head_name_update(event).and_then(|s| Some((s, meta.head_id.clone()))),
-            DescriptionUpdate { meta, description } => self.save_head_description_update(event).and_then(|s| Some((s, meta.head_id.clone()))),
-            CompletedUpdate { meta, completed } => self.save_head_completed_update(event).and_then(|s| Some((s, meta.head_id.clone()))),
-            Deletion { meta } => self.save_head_deletion(event).and_then(|s| Some((s, meta.head_id.clone()))),
+    fn save_head_event(&mut self, event: &HeadEvent) -> Result<(), StorageError> {
+        use HeadEvent::*;
+        let (line, id) = match event {
+            Creation { id, itc_event, template_id, name, description } => self.save_head_creation(event).and_then(|s| Some((s, id.clone()))),
+            NameUpdate { id, itc_event, name } => self.save_head_name_update(event).and_then(|s| Some((s, id.clone()))),
+            DescriptionUpdate { id, itc_event, description } => self.save_head_description_update(event).and_then(|s| Some((s, id.clone()))),
+            CompletedUpdate { id, itc_event, completed } => self.save_head_completed_update(event).and_then(|s| Some((s, id.clone()))),
+            Deletion { id, itc_event } => self.save_head_deletion(event).and_then(|s| Some((s, id.clone()))),
         }.ok_or_else(|| StorageError("".into()))?;
 
         self.head_log_file.file.write(line.as_bytes())
             .or_raise(|| StorageError(format!("failed to write line to file")))?;
 
-        self.head_log_file.event_positions.push((line.len() as u64, head_id));
+        self.head_log_file.event_positions.push((line.len() as u64, id));
         Ok(())
     }
 
-    fn load_all_head_events(&self) -> Result<Vec<ChecklistHeadEvent>, StorageError> {
+    fn load_all_head_events(&self) -> Result<Vec<HeadEvent>, StorageError> {
         Ok(FileStore::load_all_head_events_with_length(&self.head_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
     }
 
-    fn delete_head_event(&mut self, head_id: &uuid::Uuid) -> Result<bool, StorageError> {
-        let index = match self.head_log_file.event_positions.binary_search_by_key(head_id, |i| i.1) {
+    fn delete_head_event(&mut self, id: &uuid::Uuid) -> Result<bool, StorageError> {
+        let index = match self.head_log_file.event_positions.binary_search_by_key(id, |i| i.1) {
             Ok(i) => i,
             Err(_) => return Ok(false),
         };
@@ -569,32 +519,32 @@ impl Store for FileStore {
         Ok(true)
     }
 
-    fn save_item_event(&mut self, event: &ChecklistItemEvent) -> Result<(), StorageError> {
-        use ChecklistItemEvent::*;
-        let (line, item_id) = match event {
-            Creation {meta, head_id, name, position }  => self.save_item_creation(event).and_then(|s| Some((s, meta.item_id.clone()))),
-            NameUpdate { meta, name } => self.save_item_name_update(event).and_then(|s| Some((s, meta.item_id.clone()))),
-            PositionUpdate { meta, position } => self.save_item_position_update(event).and_then(|s| Some((s, meta.item_id.clone()))),
-            CheckedUpdate { meta, checked } => self.save_item_checked_update(event).and_then(|s| Some((s, meta.item_id.clone()))),
-            Deletion { meta } => self.save_item_deletion(event).and_then(|s| Some((s, meta.item_id.clone()))),
+    fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError> {
+        use ItemEvent::*;
+        let (line, id) = match event {
+            Creation { id, itc_event, head_id, name, position } =>  self.save_item_creation(event).and_then(|s| Some((s, id.clone()))),
+            NameUpdate { id, itc_event, name } =>  self.save_item_name_update(event).and_then(|s| Some((s, id.clone()))),
+            PositionUpdate { id, itc_event, position } =>  self.save_item_position_update(event).and_then(|s| Some((s, id.clone()))),
+            CheckedUpdate { id, itc_event, checked } =>  self.save_item_checked_update(event).and_then(|s| Some((s, id.clone()))),
+            Deletion { id, itc_event } =>  self.save_item_deletion(event).and_then(|s| Some((s, id.clone()))),
         }.ok_or_else(|| StorageError("".into()))?;
 
         self.item_log_file.file.write(line.as_bytes())
             .or_raise(|| StorageError(format!("failed to write line to file")))?;
 
-        self.item_log_file.event_positions.push((line.len() as u64, item_id));
+        self.item_log_file.event_positions.push((line.len() as u64, id));
         Ok(())
     }
 
-    fn load_all_item_events(&self) -> Result<Vec<ChecklistItemEvent>, StorageError> {
+    fn load_all_item_events(&self) -> Result<Vec<ItemEvent>, StorageError> {
         Ok(FileStore::load_all_item_events_with_length(&self.item_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
     }
 
-    fn delete_item_event(&mut self, item_id: &uuid::Uuid) -> Result<bool, StorageError> {
-        let index = match self.item_log_file.event_positions.binary_search_by_key(item_id, |i| i.1) {
+    fn delete_item_event(&mut self, id: &uuid::Uuid) -> Result<bool, StorageError> {
+        let index = match self.item_log_file.event_positions.binary_search_by_key(id, |i| i.1) {
             Ok(i) => i,
             Err(_) => return Ok(false),
         };
@@ -646,13 +596,9 @@ mod tests {
             item_log_path,
         ).unwrap();
 
-        let meta = crate::storage::model::checklist::head::HeadEventMeta {
+        let head = HeadEvent::Creation {
             id: uuid::Uuid::new_v4(),
-            head_id: uuid::Uuid::new_v4(),
-            itc_event: itc::EventTree::zero()
-        };
-        let head = ChecklistHeadEvent::Creation {
-            meta: meta,
+            itc_event: itc::EventTree::zero(),
             template_id: Some(uuid::Uuid::new_v4()),
             name: "test".into(),
             description: Some("this is a descr".into())
