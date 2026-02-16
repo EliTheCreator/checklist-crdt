@@ -10,35 +10,47 @@ use super::store::Store;
 pub struct ErrorStore;
 
 impl Store for ErrorStore {
+    fn start_transaction(&mut self) -> Result<bool, StorageError> {
+        todo!()
+    }
+
+    fn abort_transaction(&mut self) -> Result<bool, StorageError> {
+        todo!()
+    }
+
+    fn commit_transaction(&mut self) -> Result<bool, StorageError> {
+        todo!()
+    }
+
     fn save_stamp(&mut self, _: &Stamp) -> Result<(), StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
-    
+
     fn load_stamp(&mut self) -> Result<Stamp, StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
-    fn save_head(&mut self, _: &ChecklistHeadEvent) -> Result<(), StorageError> {
+    fn save_head_event(&mut self, _: &ChecklistHeadEvent) -> Result<(), StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
-    fn load_all_heads(&self) -> Result<Vec<ChecklistHeadEvent>, StorageError> {
+    fn load_all_head_events(&self) -> Result<Vec<ChecklistHeadEvent>, StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
-    fn delete_head(&mut self, _: &Uuid) -> Result<bool, StorageError> {
+    fn delete_head_event(&mut self, _: &Uuid) -> Result<bool, StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
-    fn save_item(&mut self, _: &ChecklistItemEvent) -> Result<(), StorageError> {
+    fn save_item_event(&mut self, _: &ChecklistItemEvent) -> Result<(), StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
-    fn load_all_items(&self) -> Result<Vec<ChecklistItemEvent>, StorageError> {
+    fn load_all_item_events(&self) -> Result<Vec<ChecklistItemEvent>, StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
-    fn delete_item(&mut self, _: &Uuid) -> Result<bool, StorageError> {
+    fn delete_item_event(&mut self, _: &Uuid) -> Result<bool, StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 }

@@ -7,14 +7,18 @@ use super::model::{ChecklistHeadEvent, ChecklistItemEvent};
 
 
 pub trait Store {
+    fn start_transaction(&mut self) -> Result<bool, StorageError>;
+    fn abort_transaction(&mut self) -> Result<bool, StorageError>;
+    fn commit_transaction(&mut self) -> Result<bool, StorageError>;
+
     fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError>;
     fn load_stamp(&mut self) -> Result<Stamp, StorageError>;
 
-    fn save_head(&mut self, event: &ChecklistHeadEvent) -> Result<(), StorageError>;
-    fn load_all_heads(&self) -> Result<Vec<ChecklistHeadEvent>, StorageError>;
-    fn delete_head(&mut self, head_id: &Uuid) -> Result<bool, StorageError>;
+    fn save_head_event(&mut self, event: &ChecklistHeadEvent) -> Result<(), StorageError>;
+    fn load_all_head_events(&self) -> Result<Vec<ChecklistHeadEvent>, StorageError>;
+    fn delete_head_event(&mut self, head_id: &Uuid) -> Result<bool, StorageError>;
 
-    fn save_item(&mut self, event: &ChecklistItemEvent) -> Result<(), StorageError>;
-    fn load_all_items(&self) -> Result<Vec<ChecklistItemEvent>, StorageError>;
-    fn delete_item(&mut self, item_id: &Uuid) -> Result<bool, StorageError>;
+    fn save_item_event(&mut self, event: &ChecklistItemEvent) -> Result<(), StorageError>;
+    fn load_all_item_events(&self) -> Result<Vec<ChecklistItemEvent>, StorageError>;
+    fn delete_item_event(&mut self, item_id: &Uuid) -> Result<bool, StorageError>;
 }

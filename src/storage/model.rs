@@ -55,12 +55,15 @@ pub enum ChecklistHeadEvent {
 }
 
 
+#[derive(Clone)]
 pub struct ItemEventMeta {
     pub id: Uuid,
     pub item_id: Uuid,
     pub itc_event: EventTree,
 }
 
+
+#[derive(Clone)]
 pub enum ChecklistItemEvent {
     Creation {
         meta: ItemEventMeta,
@@ -74,7 +77,7 @@ pub enum ChecklistItemEvent {
     },
     PositionUpdate {
         meta: ItemEventMeta,
-        position: String,
+        position: FractionalIndex,
     },
     CheckedUpdate {
         meta: ItemEventMeta,

@@ -72,12 +72,12 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             description: description,
         };
 
-        self.storage.save_head(&checklist_head_event)
+        self.storage.save_head_event(&checklist_head_event)
             .or_raise(|| CrdtError::Recovered("crdt unable to add checklist head".into()))?;
 
         let success_text = "crdt unable to save stamp. addition of checklist head reverted";
         let failure_text = "crdt unable to save stamp. reversion of checklist head addition failed. crdt is in inconsistent state";
-        let reversion_f = |crdt: &mut ChecklistCrdt<S, T>, id: &Uuid| crdt.storage.delete_head(id);
+        let reversion_f = |crdt: &mut ChecklistCrdt<S, T>, id: &Uuid| crdt.storage.delete_head_event(id);
         self.save_stamp_or_revert(stamp, reversion_f, head_id, success_text, failure_text)
     }
 
@@ -102,12 +102,12 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             position: position,
         };
 
-        self.storage.save_item(&checklist_item_event)
+        self.storage.save_item_event(&checklist_item_event)
             .or_raise(|| CrdtError::Recovered("crdt unable to add checklist item".into()))?;
 
         let success_text = "crdt unable to save stamp. addition of checklist item reverted";
         let failure_text = "crdt unable to save stamp. reversion of checklist item addition failed. crdt is in inconsistent state";
-        let reversion_f = |crdt: &mut ChecklistCrdt<S, T>, id: &Uuid| crdt.storage.delete_item(id);
+        let reversion_f = |crdt: &mut ChecklistCrdt<S, T>, id: &Uuid| crdt.storage.delete_item_event(id);
         self.save_stamp_or_revert(stamp, reversion_f, item_id, success_text, failure_text)
     }
 }
