@@ -34,11 +34,11 @@ pub enum HeadEvent {
 impl HeadEvent {
     pub fn id(&self) -> &Uuid {
         match self {
-            HeadEvent::Creation { id, itc_event, template_id, name, description } => id,
-            HeadEvent::NameUpdate { id, itc_event, name } => id,
-            HeadEvent::DescriptionUpdate { id, itc_event, description } => id,
-            HeadEvent::CompletedUpdate { id, itc_event, completed } => id,
-            HeadEvent::Deletion { id, itc_event } => id,
+            HeadEvent::Creation { id, .. } => id,
+            HeadEvent::NameUpdate { id, .. } => id,
+            HeadEvent::DescriptionUpdate { id, .. } => id,
+            HeadEvent::CompletedUpdate { id, .. } => id,
+            HeadEvent::Deletion { id, .. } => id,
         }
     }
 }

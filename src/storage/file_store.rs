@@ -463,11 +463,11 @@ impl Store for FileStore {
     fn save_head_event(&mut self, event: &HeadEvent) -> Result<(), StorageError> {
         use HeadEvent::*;
         let (line, id) = match event {
-            Creation { id, itc_event, template_id, name, description } => self.save_head_creation(event).and_then(|s| Some((s, id.clone()))),
-            NameUpdate { id, itc_event, name } => self.save_head_name_update(event).and_then(|s| Some((s, id.clone()))),
-            DescriptionUpdate { id, itc_event, description } => self.save_head_description_update(event).and_then(|s| Some((s, id.clone()))),
-            CompletedUpdate { id, itc_event, completed } => self.save_head_completed_update(event).and_then(|s| Some((s, id.clone()))),
-            Deletion { id, itc_event } => self.save_head_deletion(event).and_then(|s| Some((s, id.clone()))),
+            Creation { id, .. } => self.save_head_creation(event).and_then(|s| Some((s, id.clone()))),
+            NameUpdate { id, .. } => self.save_head_name_update(event).and_then(|s| Some((s, id.clone()))),
+            DescriptionUpdate { id, .. } => self.save_head_description_update(event).and_then(|s| Some((s, id.clone()))),
+            CompletedUpdate { id, .. } => self.save_head_completed_update(event).and_then(|s| Some((s, id.clone()))),
+            Deletion { id, .. } => self.save_head_deletion(event).and_then(|s| Some((s, id.clone()))),
         }.ok_or_else(|| StorageError("".into()))?;
 
         self.head_log_file.file.write(line.as_bytes())
@@ -522,11 +522,11 @@ impl Store for FileStore {
     fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError> {
         use ItemEvent::*;
         let (line, id) = match event {
-            Creation { id, itc_event, head_id, name, position } =>  self.save_item_creation(event).and_then(|s| Some((s, id.clone()))),
-            NameUpdate { id, itc_event, name } =>  self.save_item_name_update(event).and_then(|s| Some((s, id.clone()))),
-            PositionUpdate { id, itc_event, position } =>  self.save_item_position_update(event).and_then(|s| Some((s, id.clone()))),
-            CheckedUpdate { id, itc_event, checked } =>  self.save_item_checked_update(event).and_then(|s| Some((s, id.clone()))),
-            Deletion { id, itc_event } =>  self.save_item_deletion(event).and_then(|s| Some((s, id.clone()))),
+            Creation { id, .. } =>  self.save_item_creation(event).and_then(|s| Some((s, id.clone()))),
+            NameUpdate { id, .. } =>  self.save_item_name_update(event).and_then(|s| Some((s, id.clone()))),
+            PositionUpdate { id, .. } =>  self.save_item_position_update(event).and_then(|s| Some((s, id.clone()))),
+            CheckedUpdate { id, .. } =>  self.save_item_checked_update(event).and_then(|s| Some((s, id.clone()))),
+            Deletion { id, .. } =>  self.save_item_deletion(event).and_then(|s| Some((s, id.clone()))),
         }.ok_or_else(|| StorageError("".into()))?;
 
         self.item_log_file.file.write(line.as_bytes())

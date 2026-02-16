@@ -36,11 +36,11 @@ pub enum ItemEvent {
 impl ItemEvent {
     pub fn id(&self) -> &Uuid {
         match self {
-            ItemEvent::Creation { id, itc_event, head_id, name, position } => id,
-            ItemEvent::NameUpdate { id, itc_event, name } => id,
-            ItemEvent::PositionUpdate { id, itc_event, position } => id,
-            ItemEvent::CheckedUpdate { id, itc_event, checked } => id,
-            ItemEvent::Deletion { id, itc_event } => id,
+            ItemEvent::Creation { id, .. } => id,
+            ItemEvent::NameUpdate { id, .. } => id,
+            ItemEvent::PositionUpdate { id, .. } => id,
+            ItemEvent::CheckedUpdate { id, .. } => id,
+            ItemEvent::Deletion { id, .. } => id,
         }
     }
 }
