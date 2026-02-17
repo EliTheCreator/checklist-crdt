@@ -3,18 +3,43 @@ use core::fmt::{Display, Formatter, Result};
 
 
 #[derive(Debug)]
-pub enum BackendError {
-    Open(String),
-    Read(String),
-    Write(String),
+pub enum ErrorKind {
+    Open,
+    Read,
+    Write,
+}
+
+
+#[derive(Debug)]
+pub struct BackendError {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+impl BackendError {
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self { kind, message: message.into() }
+    }
+    pub fn open(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Open, message.into())
+    }
+
+    pub fn read(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Read, message.into())
+    }
+
+    pub fn write(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Write, message.into())
+    }
 }
 
 impl Display for BackendError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match self {
-            BackendError::Open(s) => write!(f, "backend open error: {}", s),
-            BackendError::Read(s) => write!(f, "backend read error: {}", s),
-            BackendError::Write(s) => write!(f, "backend write error: {}", s),
+        use self::ErrorKind::*;
+        match self.kind {
+            Open => write!(f, "backend open error: {}", self.message),
+            Read => write!(f, "backend read error: {}", self.message),
+            Write => write!(f, "backend write error: {}", self.message),
         }
     }
 }

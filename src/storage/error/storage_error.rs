@@ -13,6 +13,20 @@ pub enum StorageError {
     Backend(BackendError),
 }
 
+impl StorageError {
+    pub fn stamp(stamp_error: StampError) -> Self {
+        Self::Stamp(stamp_error)
+    }
+
+    pub fn transaction(transaction_error: TransactionError) -> Self {
+        Self::Transaction(transaction_error)
+    }
+
+    pub fn backend(backend_error: BackendError) -> Self {
+        Self::Backend(backend_error)
+    }
+}
+
 impl Display for StorageError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
