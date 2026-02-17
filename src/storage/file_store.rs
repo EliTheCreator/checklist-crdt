@@ -26,7 +26,7 @@ pub struct FileStore {
     head_log_file: EventLogFile,
     item_log_file: EventLogFile,
     in_transaction: bool,
-    rollback_stack: Vec<Box<dyn FnMut(&mut FileStore) -> Result<(), StorageError>>>,
+    rollback_stack: Vec<RollbackFunction>,
 }
 
 impl FileStore {

@@ -1,3 +1,3 @@
-mod crdt;
-mod storage;
-mod transport;
+pub mod crdt;
+pub mod storage;
+pub mod transport;
