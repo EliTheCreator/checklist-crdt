@@ -91,11 +91,34 @@ impl FileStorage {
         iter: &mut Split<'a, &str>,
         expected_value: &str,
     ) -> Result<&'a str, StorageError> {
-        Ok(iter.next()
-            .ok_or_else(||
-                StorageError::data_decode(format!("expected {}, found end of line", expected_value))
-            )?
-        )
+        iter.next().ok_or_raise(|| StorageError::data_decode(
+            format!("expected {}, found end of line", expected_value)
+        ))
+    }
+
+    fn get_next_string(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<String, StorageError> {
+        let first = FileStorage::get_next_str(iter, &format!("word 1 of {}", expected_value))?;
+
+        let mut words = Vec::<&str>::new();
+        let (raw_count, word) = first.split_once(":")
+            .ok_or_raise(|| StorageError::data_decode(
+                format!("unable to split '{}' for length value", first)
+            ))?;
+        words.push(word);
+
+        let count = raw_count.parse::<u64>()
+            .or_raise(|| StorageError::data_decode(
+                format!("unable to parse '{}' as word count", raw_count)
+            ))?;
+
+        for word_number in 2..=count {
+            let next_word = FileStorage::get_next_str(
+                iter, &format!("word {} of {}", word_number, expected_value)
+            )?;
+            words.push(next_word)
+        }
+
+        Ok(words.join(" "))
     }
 
     fn parse_uuid(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<Uuid, StorageError> {
@@ -137,13 +160,16 @@ impl FileStorage {
 
     fn serialize_head_creation(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::Creation { id, itc_event, template_id, name, description } = event {
+            let description = description.clone().unwrap_or(String::new());
             Some(format!(
-                "Creation {} {} {} {} {}\n",
+                "Creation {} {} {} {}:{} {}:{}\n",
                 id,
                 itc_event,
                 template_id.map_or(String::new(), |id| id.to_string()),
+                name.matches(" ").count()+1,
                 name,
-                description.clone().unwrap_or(String::new()),
+                description.matches(" ").count()+1,
+                description,
             ))
         } else {
             None
@@ -155,12 +181,10 @@ impl FileStorage {
 
         let template_id = FileStorage::parse_optional_uuid(iter, "template id")?;
 
-        let name = FileStorage::get_next_str(iter, "name")?
-            .to_string();
+        let name = FileStorage::get_next_string(iter, "name")?;
 
-        let description = iter.next()
-            .filter(|s| s.is_empty())
-            .map(|s| s.to_string());
+        let description = Some(FileStorage::get_next_string(iter, "description")?)
+            .filter(|s| s.is_empty());
 
         Ok(HeadEvent::Creation { id, itc_event, template_id, name, description })
     }
@@ -168,9 +192,10 @@ impl FileStorage {
     fn serialize_head_name_update(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::NameUpdate { id, itc_event, name } = event {
             Some(format!(
-                "NameUpdate {} {} {}\n",
+                "NameUpdate {} {} {}:{}\n",
                 id,
                 itc_event,
+                name.matches(" ").count()+1,
                 name,
             ))
         } else {
@@ -180,8 +205,7 @@ impl FileStorage {
 
     fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
-        let name = FileStorage::get_next_str(iter, "name")?
-            .to_string();
+        let name = FileStorage::get_next_string(iter, "name")?;
 
         Ok(HeadEvent::NameUpdate { id, itc_event, name })
     }
@@ -277,10 +301,11 @@ impl FileStorage {
     fn serialize_item_creation(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::Creation { id, itc_event, head_id, name, position } = event {
             Some(format!(
-                "Creation {} {} {} {} {}\n",
+                "Creation {} {} {} {}:{} {}\n",
                 id,
                 itc_event,
                 head_id,
+                name.matches(" ").count()+1,
                 name,
                 position,
             ))
@@ -294,8 +319,7 @@ impl FileStorage {
 
         let head_id = FileStorage::parse_uuid(iter, "head id")?;
 
-        let name = FileStorage::get_next_str(iter, "name")?
-            .to_string();
+        let name = FileStorage::get_next_string(iter, "name")?;
 
         let position = FileStorage::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
@@ -306,9 +330,10 @@ impl FileStorage {
     fn serialize_item_name_update(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::NameUpdate { id, itc_event, name } = event {
             Some(format!(
-                "NameUpdate {} {} {}\n",
+                "NameUpdate {} {} {}:{}\n",
                 id,
                 itc_event,
+                name.matches(" ").count()+1,
                 name,
             ))
         } else {
@@ -319,8 +344,7 @@ impl FileStorage {
     fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
-        let name = FileStorage::get_next_str(iter, "name")?
-            .to_string();
+        let name = FileStorage::get_next_string(iter, "name")?;
 
         Ok(ItemEvent::NameUpdate { id, itc_event, name })
     }
@@ -667,8 +691,8 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             itc_event: itc::EventTree::zero(),
             template_id: Some(uuid::Uuid::new_v4()),
-            name: "test".into(),
-            description: Some("this is a descr".into())
+            name: "test test".into(),
+            description: Some("this is a description".into())
         };
 
         file_store.save_head_event(&head).unwrap();
