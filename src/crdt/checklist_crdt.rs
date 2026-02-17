@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::crdt::crdt_error::CrdtError;
 use crate::storage::model::checklist::head::HeadEvent;
 use crate::storage::model::checklist::item::ItemEvent;
-use crate::storage::storage_error::StorageError;
+use crate::storage::error::storage_error::StorageError;
 use crate::storage::store::Store;
 use crate::transport::transport::Transport;
 

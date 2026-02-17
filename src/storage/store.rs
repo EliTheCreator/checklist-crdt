@@ -2,7 +2,7 @@ use exn::Result;
 use itc::Stamp;
 use uuid::Uuid;
 
-use super::storage_error::StorageError;
+use super::error::storage_error::StorageError;
 use super::model::checklist::head::HeadEvent;
 use super::model::checklist::item::ItemEvent;
 
