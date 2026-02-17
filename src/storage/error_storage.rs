@@ -2,17 +2,19 @@ use exn::{Result, bail};
 use itc::Stamp;
 use uuid::Uuid;
 
+
 use super::model::checklist::head::HeadEvent;
 use super::model::checklist::item::ItemEvent;
 use super::error::storage_error::StorageError;
+use super::error::transaction_error::TransactionError;
 use super::store::Store;
 
 
-pub struct ErrorStore;
+pub struct ErrorStorage;
 
-impl Store for ErrorStore {
+impl Store for ErrorStorage {
     fn start_transaction(&mut self) -> Result<bool, StorageError> {
-        bail!(StorageError("this store always returns an error".into()).into())
+        bail!(StorageError::transaction(TransactionError::partial_rollback("this store always returns an error")))
     }
 
     fn abort_transaction(&mut self) -> Result<bool, StorageError> {

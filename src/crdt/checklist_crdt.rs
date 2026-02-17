@@ -110,7 +110,7 @@ mod test {
 
     #[test]
     fn init_test() {
-        use crate::storage::file_store::FileStore;
+        use crate::storage::file_storage::FileStorage;
 
         struct DummyTransport {}
         impl Transport for DummyTransport {}
@@ -118,7 +118,7 @@ mod test {
         let stamp_path = "./stamp.txt";
         let head_log_path = "./head_log.txt";
         let item_log_path = "./item_log.txt";
-        let file_store = FileStore::new(
+        let file_store = FileStorage::new(
             stamp_path,
             head_log_path,
             item_log_path,

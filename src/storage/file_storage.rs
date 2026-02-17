@@ -9,11 +9,11 @@ use uuid::Uuid;
 
 use super::model::checklist::head::HeadEvent;
 use super::model::checklist::item::ItemEvent;
-use super::storage_error::StorageError;
+use super::error::storage_error::StorageError;
 use super::store::Store;
 
 
-type RollbackFunction = Box<dyn FnMut(&mut FileStore) -> Result<(), StorageError>>;
+type RollbackFunction = Box<dyn FnMut(&mut FileStorage) -> Result<(), StorageError>>;
 
 struct EventLogFile {
     file: File,
@@ -21,7 +21,7 @@ struct EventLogFile {
 }
 
 
-pub struct FileStore {
+pub struct FileStorage {
     stamp_file: File,
     head_log_file: EventLogFile,
     item_log_file: EventLogFile,
@@ -29,7 +29,7 @@ pub struct FileStore {
     rollback_stack: Vec<RollbackFunction>,
 }
 
-impl FileStore {
+impl FileStorage {
     pub fn new(
         stamp_path: &str,
         head_log_path: &str,
@@ -50,7 +50,7 @@ impl FileStore {
             .or_raise(|| StorageError(format!("failed to open event log file at {head_log_path}")))?;
 
         let mut offset: u64 = 0;
-        let head_positions: Vec<(u64, Uuid)> = FileStore::load_all_head_events_with_length(&head_log_file)?
+        let head_positions: Vec<(u64, Uuid)> = FileStorage::load_all_head_events_with_length(&head_log_file)?
             .into_iter()
             .map(|head| {
                 let cur_offset = offset;
@@ -67,7 +67,7 @@ impl FileStore {
             .or_raise(|| StorageError(format!("failed to open event log file at {item_log_path}")))?;
 
         let mut offset: u64 = 0;
-        let item_positions: Vec<(u64, Uuid)> = FileStore::load_all_item_events_with_length(&item_log_file)?
+        let item_positions: Vec<(u64, Uuid)> = FileStorage::load_all_item_events_with_length(&item_log_file)?
             .into_iter()
             .map(|item| {
                 let cur_offset = offset;
@@ -76,7 +76,7 @@ impl FileStore {
                 (cur_offset, uuid)
             }).collect();
 
-        let file_store = FileStore {
+        let file_store = FileStorage {
             stamp_file: stamp_file,
             head_log_file: EventLogFile { file: head_log_file, event_positions: head_positions },
             item_log_file: EventLogFile { file: item_log_file, event_positions: item_positions },
@@ -117,7 +117,7 @@ impl FileStore {
     }
 
     fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let template_id = iter.next()
@@ -150,7 +150,7 @@ impl FileStore {
     }
 
     fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let name = iter.next()
@@ -174,7 +174,7 @@ impl FileStore {
     }
 
     fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let description = iter.next()
@@ -198,7 +198,7 @@ impl FileStore {
     }
 
     fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let completed = iter.next()
@@ -222,7 +222,7 @@ impl FileStore {
     }
 
     fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         Ok(HeadEvent::Deletion { id, itc_event })
@@ -231,11 +231,11 @@ impl FileStore {
     fn load_head_event(line: &str) -> Result<(u64, HeadEvent), StorageError> {
         let mut parts = line.split(" ");
         let head = match parts.next() {
-            Some("Creation") => FileStore::parse_head_creation(&mut parts),
-            Some("NameUpdate") => FileStore::parse_head_name_update(&mut parts),
-            Some("DescriptionUpdate") => FileStore::parse_head_description_update(&mut parts),
-            Some("CompletedUpdate") => FileStore::parse_head_completed_update(&mut parts),
-            Some("Deletion") => FileStore::parse_head_deletion(&mut parts),
+            Some("Creation") => FileStorage::parse_head_creation(&mut parts),
+            Some("NameUpdate") => FileStorage::parse_head_name_update(&mut parts),
+            Some("DescriptionUpdate") => FileStorage::parse_head_description_update(&mut parts),
+            Some("CompletedUpdate") => FileStorage::parse_head_completed_update(&mut parts),
+            Some("Deletion") => FileStorage::parse_head_deletion(&mut parts),
             Some(_) => bail!(StorageError("".into())),
             None => bail!(StorageError("".into())),
         }?;
@@ -247,7 +247,7 @@ impl FileStore {
             .lines()
             .map(|line| {
                 match line {
-                    Ok(l) => FileStore::load_head_event(&l),
+                    Ok(l) => FileStorage::load_head_event(&l),
                     Err(e) => Err(e).or_raise(|| StorageError("".into())),
                 }
             })
@@ -271,7 +271,7 @@ impl FileStore {
     }
 
     fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let head_id = iter.next()
@@ -304,7 +304,7 @@ impl FileStore {
     }
 
     fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let name = iter.next()
@@ -328,7 +328,7 @@ impl FileStore {
     }
 
     fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let position = iter.next()
@@ -352,7 +352,7 @@ impl FileStore {
     }
 
     fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         let checked = iter.next()
@@ -376,7 +376,7 @@ impl FileStore {
     }
 
     fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStore::parse_event_meta(iter)
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)
             .or_raise(|| StorageError("".into()))?;
 
         Ok(ItemEvent::Deletion { id, itc_event })
@@ -385,11 +385,11 @@ impl FileStore {
     fn load_item_event(line: &str) -> Result<(u64, ItemEvent), StorageError> {
         let mut parts = line.split(" ");
         let event = match parts.next() {
-            Some("Creation") => FileStore::parse_item_creation(&mut parts),
-            Some("NameUpdate") => FileStore::parse_item_name_update(&mut parts),
-            Some("PositionUpdate") => FileStore::parse_item_position_update(&mut parts),
-            Some("CheckedUpdate") => FileStore::parse_item_checked_update(&mut parts),
-            Some("Deletion") => FileStore::parse_item_deletion(&mut parts),
+            Some("Creation") => FileStorage::parse_item_creation(&mut parts),
+            Some("NameUpdate") => FileStorage::parse_item_name_update(&mut parts),
+            Some("PositionUpdate") => FileStorage::parse_item_position_update(&mut parts),
+            Some("CheckedUpdate") => FileStorage::parse_item_checked_update(&mut parts),
+            Some("Deletion") => FileStorage::parse_item_deletion(&mut parts),
             Some(_) => bail!(StorageError("".into())),
             None => bail!(StorageError("".into())),
         }?;
@@ -401,7 +401,7 @@ impl FileStore {
             .lines()
             .map(|line| {
                 match line {
-                    Ok(l) => FileStore::load_item_event(&l),
+                    Ok(l) => FileStorage::load_item_event(&l),
                     Err(e) => Err(e).or_raise(|| StorageError("".into())),
                 }
             })
@@ -410,7 +410,7 @@ impl FileStore {
     }
 }
 
-impl Store for FileStore {
+impl Store for FileStorage {
     fn start_transaction(&mut self) -> Result<bool, StorageError> {
         let return_value = !self.in_transaction;
         self.in_transaction = true;
@@ -441,7 +441,7 @@ impl Store for FileStore {
     fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError> {
         if self.in_transaction {
             let current_stamp = self.load_stamp()?;
-            self.rollback_stack.push(Box::new(move |store: &mut FileStore| store.save_stamp(&current_stamp)));
+            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_stamp(&current_stamp)));
         }
 
         self.stamp_file.set_len(0)
@@ -478,7 +478,7 @@ impl Store for FileStore {
 
         if self.in_transaction {
             let cloned_id = id.clone();
-            self.rollback_stack.push(Box::new(move |store: &mut FileStore|
+            self.rollback_stack.push(Box::new(move |store: &mut FileStorage|
                 store.delete_head_event(&cloned_id).map(|_| ())
             ));
         }
@@ -488,7 +488,7 @@ impl Store for FileStore {
     }
 
     fn load_all_head_events(&self) -> Result<Vec<HeadEvent>, StorageError> {
-        Ok(FileStore::load_all_head_events_with_length(&self.head_log_file.file)?
+        Ok(FileStorage::load_all_head_events_with_length(&self.head_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
@@ -524,13 +524,13 @@ impl Store for FileStore {
             (line_slice, None)
         };
         
-        let head_event = FileStore::load_head_event(line)
+        let head_event = FileStorage::load_head_event(line)
             .or_raise(|| StorageError("".into()))?
             .1;
 
         if self.in_transaction {
             let cloned_head_event = head_event.clone();
-            self.rollback_stack.push(Box::new(move |store: &mut FileStore| store.save_head_event(&cloned_head_event)));
+            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_head_event(&cloned_head_event)));
         }
 
         self.head_log_file.file.set_len(offset)
@@ -562,7 +562,7 @@ impl Store for FileStore {
 
         if self.in_transaction {
             let cloned_id = id.clone();
-            self.rollback_stack.push(Box::new(move |store: &mut FileStore|
+            self.rollback_stack.push(Box::new(move |store: &mut FileStorage|
                 store.delete_item_event(&cloned_id).map(|_| ())
             ));
         }
@@ -573,7 +573,7 @@ impl Store for FileStore {
     }
 
     fn load_all_item_events(&self) -> Result<Vec<ItemEvent>, StorageError> {
-        Ok(FileStore::load_all_item_events_with_length(&self.item_log_file.file)?
+        Ok(FileStorage::load_all_item_events_with_length(&self.item_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
@@ -609,13 +609,13 @@ impl Store for FileStore {
             (line_slice, None)
         };
         
-        let item_event = FileStore::load_item_event(line)
+        let item_event = FileStorage::load_item_event(line)
             .or_raise(|| StorageError("".into()))?
             .1;
 
         if self.in_transaction {
             let cloned_item_event = item_event.clone();
-            self.rollback_stack.push(Box::new(move |store: &mut FileStore| store.save_item_event(&cloned_item_event)));
+            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_item_event(&cloned_item_event)));
         }
 
         self.item_log_file.file.set_len(offset)
@@ -644,7 +644,7 @@ mod tests {
         let stamp_path = "./stamp.txt";
         let head_log_path = "./head_log.txt";
         let item_log_path = "./item_log.txt";
-        let mut file_store = FileStore::new(
+        let mut file_store = FileStorage::new(
             stamp_path,
             head_log_path,
             item_log_path,
