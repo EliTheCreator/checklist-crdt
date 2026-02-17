@@ -87,23 +87,43 @@ impl FileStorage {
         Ok(file_store)
     }
 
+    fn get_next_str<'a>(
+        iter: &mut Split<'a, &str>,
+        expected_value: &str,
+    ) -> Result<&'a str, StorageError> {
+        Ok(iter.next()
+            .ok_or_else(||
+                StorageError::data_decode(format!("expected {}, found end of line", expected_value))
+            )?
+        )
+    }
+
     fn parse_uuid(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<Uuid, StorageError> {
-        iter.next()
-            .ok_or_else(|| StorageError::data_decode(format!("expected {}, found end of line", expected_value)))?
+        FileStorage::get_next_str(iter, expected_value)?
             .parse::<Uuid>()
-            .or_raise(|| StorageError::data_decode("failed to decode uuid"))
+            .or_raise(|| StorageError::data_decode("failed to decode Uuid"))
+    }
+
+    fn parse_optional_uuid(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<Option<Uuid>, StorageError> {
+        let s = FileStorage::get_next_str(iter, expected_value)?;
+
+        if s.is_empty() {
+            return Ok(None);
+        }
+
+        s.parse::<Uuid>()
+            .map(Some)
+            .or_raise(|| StorageError::data_decode("failed to decode Uuid"))
     }
 
     fn parse_itc_event(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<EventTree, StorageError> {
-        iter.next()
-            .ok_or_else(|| StorageError::data_decode(format!("expected {}, found end of line", expected_value)))?
+        FileStorage::get_next_str(iter, expected_value)?
             .parse::<EventTree>()
-            .or_raise(|| StorageError::data_decode("failed to decode itc_event"))
+            .or_raise(|| StorageError::data_decode("failed to decode EventTree"))
     }
 
     fn parse_bool(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<bool, StorageError> {
-        iter.next()
-            .ok_or_else(|| StorageError::data_decode(format!("expected {}, found end of line", expected_value)))?
+        FileStorage::get_next_str(iter, expected_value)?
             .parse::<bool>()
             .or_raise(|| StorageError::data_decode("failed to decode bool"))
     }
@@ -121,7 +141,7 @@ impl FileStorage {
                 "Creation {} {} {} {} {}\n",
                 id,
                 itc_event,
-                template_id.unwrap_or(Uuid::nil()),
+                template_id.map_or(String::new(), |id| id.to_string()),
                 name,
                 description.clone().unwrap_or(String::new()),
             ))
@@ -133,14 +153,13 @@ impl FileStorage {
     fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
-        let template_id = FileStorage::parse_uuid(iter, "template id")?;
-        let template_id = (!template_id.is_nil()).then_some(template_id);
+        let template_id = FileStorage::parse_optional_uuid(iter, "template id")?;
 
-        let name = iter.next()
-            .ok_or_else(|| StorageError::data_decode("expected name, found end of line"))?
+        let name = FileStorage::get_next_str(iter, "name")?
             .to_string();
 
         let description = iter.next()
+            .filter(|s| s.is_empty())
             .map(|s| s.to_string());
 
         Ok(HeadEvent::Creation { id, itc_event, template_id, name, description })
@@ -161,9 +180,7 @@ impl FileStorage {
 
     fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
-
-        let name = iter.next()
-            .ok_or_else(|| StorageError::data_decode("expected name, found end of line"))?
+        let name = FileStorage::get_next_str(iter, "name")?
             .to_string();
 
         Ok(HeadEvent::NameUpdate { id, itc_event, name })
@@ -184,9 +201,7 @@ impl FileStorage {
 
     fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
-
-        let description = iter.next()
-            .ok_or_else(|| StorageError::data_decode("expected description, found end of line"))?
+        let description = FileStorage::get_next_str(iter, "description")?
             .to_string();
 
         Ok(HeadEvent::DescriptionUpdate { id, itc_event, description })
@@ -279,12 +294,10 @@ impl FileStorage {
 
         let head_id = FileStorage::parse_uuid(iter, "head id")?;
 
-        let name = iter.next()
-            .ok_or_else(|| StorageError::data_decode("expected name, found end of line"))?
+        let name = FileStorage::get_next_str(iter, "name")?
             .to_string();
 
-        let position = iter.next()
-            .ok_or_else(|| StorageError::data_decode("expected position, found end of line"))?;
+        let position = FileStorage::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
         Ok(ItemEvent::Creation { id, itc_event, head_id, name, position })
@@ -306,8 +319,7 @@ impl FileStorage {
     fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
-        let name = iter.next()
-            .ok_or_else(|| StorageError::data_decode("expected name, found end of line"))?
+        let name = FileStorage::get_next_str(iter, "name")?
             .to_string();
 
         Ok(ItemEvent::NameUpdate { id, itc_event, name })
@@ -329,8 +341,7 @@ impl FileStorage {
     fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
-        let position = iter.next()
-            .ok_or_else(|| StorageError::data_decode("expected position, found end of line"))?;
+        let position = FileStorage::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
         Ok(ItemEvent::PositionUpdate { id, itc_event, position })
