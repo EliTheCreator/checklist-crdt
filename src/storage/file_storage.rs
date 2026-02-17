@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::model::checklist::head::HeadEvent;
 use super::model::checklist::item::ItemEvent;
-use super::error::storage_error::StorageError;
+use super::storage_error::StorageError;
 use super::store::Store;
 
 
