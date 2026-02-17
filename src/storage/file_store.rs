@@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::str::{FromStr, Split};
 
-use exn::{bail, Result, ResultExt};
+use exn::{OptionExt, Result, ResultExt, bail};
 use itc::{EventTree, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
@@ -476,6 +476,13 @@ impl Store for FileStore {
         self.head_log_file.file.write(line.as_bytes())
             .or_raise(|| StorageError(format!("failed to write line to file")))?;
 
+        if self.in_transaction {
+            let cloned_id = id.clone();
+            self.rollback_stack.push(Box::new(move |store: &mut FileStore|
+                store.delete_head_event(&cloned_id).map(|_| ())
+            ));
+        }
+
         self.head_log_file.event_positions.push((line.len() as u64, id));
         Ok(())
     }
@@ -487,24 +494,44 @@ impl Store for FileStore {
         )
     }
 
-    fn delete_head_event(&mut self, id: &uuid::Uuid) -> Result<bool, StorageError> {
+    fn delete_head_event(&mut self, id: &uuid::Uuid) -> Result<HeadEvent, StorageError> {
         let index = match self.head_log_file.event_positions.binary_search_by_key(id, |i| i.1) {
             Ok(i) => i,
-            Err(_) => return Ok(false),
+            Err(_) => bail!(StorageError("".into())),
         };
 
         let (offset, _) = self.head_log_file.event_positions.remove(index);
 
-        let remainder = (index < self.head_log_file.event_positions.len()).then_some({
-            let next_offset = self.head_log_file.event_positions[index].0;
-            self.head_log_file.file.seek(SeekFrom::Start(next_offset))
-                .or_raise(|| StorageError("".into()))?;
+        self.head_log_file.file.seek(SeekFrom::Start(offset))
+            .or_raise(|| StorageError("".into()))?;
 
-            let mut buffer = String::new();
-            self.head_log_file.file.read_to_string(&mut buffer)
-                .or_raise(|| StorageError("".into()))?;
-            (buffer, next_offset-offset)
-        });
+        let mut buffer = String::new();
+        self.head_log_file.file.read_to_string(&mut buffer)
+            .or_raise(|| StorageError("".into()))?;
+
+        let (line, remainder) = if index < self.head_log_file.event_positions.len() {
+            let next_offset = self.head_log_file.event_positions[index].0;
+            let first_line_size = (next_offset-offset) as usize;
+            let line_slice = buffer.get(0 .. first_line_size-1)
+                .ok_or_raise(|| StorageError("".into()))?;
+            let remainder_slice = buffer.get(first_line_size .. buffer.len()-1)
+                .ok_or_raise(|| StorageError("".into()))?;
+
+            (line_slice, Some((remainder_slice, first_line_size as u64)))
+        } else {
+            let line_slice = buffer.get(0 .. buffer.len()-1)
+                .ok_or_raise(|| StorageError("".into()))?;
+            (line_slice, None)
+        };
+        
+        let head_event = FileStore::load_head_event(line)
+            .or_raise(|| StorageError("".into()))?
+            .1;
+
+        if self.in_transaction {
+            let cloned_head_event = head_event.clone();
+            self.rollback_stack.push(Box::new(move |store: &mut FileStore| store.save_head_event(&cloned_head_event)));
+        }
 
         self.head_log_file.file.set_len(offset)
             .or_raise(|| StorageError(format!("")))?;
@@ -517,7 +544,7 @@ impl Store for FileStore {
                 .for_each(|tuple| tuple.0 -= diff);
         };
 
-        Ok(true)
+        Ok(head_event)
     }
 
     fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError> {
@@ -533,7 +560,15 @@ impl Store for FileStore {
         self.item_log_file.file.write(line.as_bytes())
             .or_raise(|| StorageError(format!("failed to write line to file")))?;
 
+        if self.in_transaction {
+            let cloned_id = id.clone();
+            self.rollback_stack.push(Box::new(move |store: &mut FileStore|
+                store.delete_item_event(&cloned_id).map(|_| ())
+            ));
+        }
+
         self.item_log_file.event_positions.push((line.len() as u64, id));
+
         Ok(())
     }
 
@@ -544,24 +579,44 @@ impl Store for FileStore {
         )
     }
 
-    fn delete_item_event(&mut self, id: &uuid::Uuid) -> Result<bool, StorageError> {
+    fn delete_item_event(&mut self, id: &Uuid) -> Result<ItemEvent, StorageError> {
         let index = match self.item_log_file.event_positions.binary_search_by_key(id, |i| i.1) {
             Ok(i) => i,
-            Err(_) => return Ok(false),
+            Err(_) => bail!(StorageError("".into())),
         };
 
         let (offset, _) = self.item_log_file.event_positions.remove(index);
 
-        let remainder = (index < self.item_log_file.event_positions.len()).then_some({
-            let next_offset = self.item_log_file.event_positions[index].0;
-            self.item_log_file.file.seek(SeekFrom::Start(next_offset))
-                .or_raise(|| StorageError("".into()))?;
+        self.item_log_file.file.seek(SeekFrom::Start(offset))
+            .or_raise(|| StorageError("".into()))?;
 
-            let mut buffer = String::new();
-            self.item_log_file.file.read_to_string(&mut buffer)
-                .or_raise(|| StorageError("".into()))?;
-            (buffer, next_offset-offset)
-        });
+        let mut buffer = String::new();
+        self.item_log_file.file.read_to_string(&mut buffer)
+            .or_raise(|| StorageError("".into()))?;
+
+        let (line, remainder) = if index < self.item_log_file.event_positions.len() {
+            let next_offset = self.item_log_file.event_positions[index].0;
+            let first_line_size = (next_offset-offset) as usize;
+            let line_slice = buffer.get(0 .. first_line_size-1)
+                .ok_or_raise(|| StorageError("".into()))?;
+            let remainder_slice = buffer.get(first_line_size .. buffer.len()-1)
+                .ok_or_raise(|| StorageError("".into()))?;
+
+            (line_slice, Some((remainder_slice, first_line_size as u64)))
+        } else {
+            let line_slice = buffer.get(0 .. buffer.len()-1)
+                .ok_or_raise(|| StorageError("".into()))?;
+            (line_slice, None)
+        };
+        
+        let item_event = FileStore::load_item_event(line)
+            .or_raise(|| StorageError("".into()))?
+            .1;
+
+        if self.in_transaction {
+            let cloned_item_event = item_event.clone();
+            self.rollback_stack.push(Box::new(move |store: &mut FileStore| store.save_item_event(&cloned_item_event)));
+        }
 
         self.item_log_file.file.set_len(offset)
             .or_raise(|| StorageError(format!("")))?;
@@ -574,7 +629,7 @@ impl Store for FileStore {
                 .for_each(|tuple| tuple.0 -= diff);
         };
 
-        Ok(true)
+        Ok(item_event)
     }
 }
 

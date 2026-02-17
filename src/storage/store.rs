@@ -17,9 +17,9 @@ pub trait Store {
 
     fn save_head_event(&mut self, event: &HeadEvent) -> Result<(), StorageError>;
     fn load_all_head_events(&self) -> Result<Vec<HeadEvent>, StorageError>;
-    fn delete_head_event(&mut self, id: &Uuid) -> Result<bool, StorageError>;
+    fn delete_head_event(&mut self, id: &Uuid) -> Result<HeadEvent, StorageError>;
 
     fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError>;
     fn load_all_item_events(&self) -> Result<Vec<ItemEvent>, StorageError>;
-    fn delete_item_event(&mut self, id: &Uuid) -> Result<bool, StorageError>;
+    fn delete_item_event(&mut self, id: &Uuid) -> Result<ItemEvent, StorageError>;
 }

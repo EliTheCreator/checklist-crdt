@@ -2,6 +2,7 @@ use itc::EventTree;
 use uuid::Uuid;
 
 
+#[derive(Clone)]
 pub enum HeadEvent {
     Creation {
         id: Uuid,

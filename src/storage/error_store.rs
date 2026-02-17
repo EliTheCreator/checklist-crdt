@@ -39,7 +39,7 @@ impl Store for ErrorStore {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
-    fn delete_head_event(&mut self, _: &Uuid) -> Result<bool, StorageError> {
+    fn delete_head_event(&mut self, _: &Uuid) -> Result<HeadEvent, StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
@@ -51,7 +51,7 @@ impl Store for ErrorStore {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 
-    fn delete_item_event(&mut self, _: &Uuid) -> Result<bool, StorageError> {
+    fn delete_item_event(&mut self, _: &Uuid) -> Result<ItemEvent, StorageError> {
         Result::Err(StorageError("this store always returns an error".into()).into())
     }
 }
