@@ -37,12 +37,14 @@ impl FileStore {
     )  -> Result<Self, StorageError> {
         let stamp_file = OpenOptions::new()
             .create(true)
+            .read(true)
             .write(true)
             .open(stamp_path)
             .or_raise(|| StorageError(format!("failed to open stamp file at {stamp_path}")))?;
 
         let head_log_file = OpenOptions::new()
             .create(true)
+            .read(true)
             .write(true)
             .open(head_log_path)
             .or_raise(|| StorageError(format!("failed to open event log file at {head_log_path}")))?;
@@ -59,6 +61,7 @@ impl FileStore {
 
         let item_log_file = OpenOptions::new()
             .create(true)
+            .read(true)
             .write(true)
             .open(item_log_path)
             .or_raise(|| StorageError(format!("failed to open event log file at {item_log_path}")))?;
@@ -101,7 +104,7 @@ impl FileStore {
     fn save_head_creation(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::Creation { id, itc_event, template_id, name, description } = event {
             Some(format!(
-                "Creation {} {} {} {} {}",
+                "Creation {} {} {} {} {}\n",
                 id,
                 itc_event,
                 template_id.unwrap_or(Uuid::nil()),
@@ -136,7 +139,7 @@ impl FileStore {
     fn save_head_name_update(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::NameUpdate { id, itc_event, name } = event {
             Some(format!(
-                "NameUpdate {} {} {}",
+                "NameUpdate {} {} {}\n",
                 id,
                 itc_event,
                 name,
@@ -160,7 +163,7 @@ impl FileStore {
     fn save_head_description_update(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::DescriptionUpdate { id, itc_event, description } = event {
             Some(format!(
-                "DescriptionUpdate {} {} {}",
+                "DescriptionUpdate {} {} {}\n",
                 id,
                 itc_event,
                 description,
@@ -184,7 +187,7 @@ impl FileStore {
     fn save_head_completed_update(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::CompletedUpdate { id, itc_event, completed } = event {
             Some(format!(
-                "CompletedUpdate {} {} {}",
+                "CompletedUpdate {} {} {}\n",
                 id,
                 itc_event,
                 completed,
@@ -209,7 +212,7 @@ impl FileStore {
     fn save_head_deletion(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::Deletion { id, itc_event } = event {
             Some(format!(
-                "Deletion {} {}",
+                "Deletion {} {}\n",
                 id,
                 itc_event,
             ))
@@ -255,7 +258,7 @@ impl FileStore {
     fn save_item_creation(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::Creation { id, itc_event, head_id, name, position } = event {
             Some(format!(
-                "Creation {} {} {} {} {}",
+                "Creation {} {} {} {} {}\n",
                 id,
                 itc_event,
                 head_id,
@@ -290,7 +293,7 @@ impl FileStore {
     fn save_item_name_update(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::NameUpdate { id, itc_event, name } = event {
             Some(format!(
-                "NameUpdate {} {} {}",
+                "NameUpdate {} {} {}\n",
                 id,
                 itc_event,
                 name,
@@ -314,7 +317,7 @@ impl FileStore {
     fn save_item_position_update(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::PositionUpdate { id, itc_event, position } = event {
             Some(format!(
-                "PositionUpdate {} {} {}",
+                "PositionUpdate {} {} {}\n",
                 id,
                 itc_event,
                 position,
@@ -338,7 +341,7 @@ impl FileStore {
     fn save_item_checked_update(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::CheckedUpdate { id, itc_event, checked } = event {
             Some(format!(
-                "CheckedUpdate {} {} {}",
+                "CheckedUpdate {} {} {}\n",
                 id,
                 itc_event,
                 checked,
@@ -363,7 +366,7 @@ impl FileStore {
     fn save_item_deletion(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::Deletion { id, itc_event } = event {
             Some(format!(
-                "Deletion {} {}",
+                "Deletion {} {}\n",
                 id,
                 itc_event,
             ))
