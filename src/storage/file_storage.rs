@@ -40,14 +40,14 @@ impl FileStorage {
             .read(true)
             .write(true)
             .open(stamp_path)
-            .or_raise(|| StorageError(format!("failed to open stamp file at {stamp_path}")))?;
+            .or_raise(|| StorageError::backend_open(format!("failed to open stamp file at {stamp_path}")))?;
 
         let head_log_file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
             .open(head_log_path)
-            .or_raise(|| StorageError(format!("failed to open event log file at {head_log_path}")))?;
+            .or_raise(|| StorageError::backend_open(format!("failed to open event log file at {head_log_path}")))?;
 
         let mut offset: u64 = 0;
         let head_positions: Vec<(u64, Uuid)> = FileStorage::load_all_head_events_with_length(&head_log_file)?
@@ -64,7 +64,7 @@ impl FileStorage {
             .read(true)
             .write(true)
             .open(item_log_path)
-            .or_raise(|| StorageError(format!("failed to open event log file at {item_log_path}")))?;
+            .or_raise(|| StorageError::backend_open(format!("failed to open event log file at {item_log_path}")))?;
 
         let mut offset: u64 = 0;
         let item_positions: Vec<(u64, Uuid)> = FileStorage::load_all_item_events_with_length(&item_log_file)?
@@ -87,21 +87,35 @@ impl FileStorage {
         Ok(file_store)
     }
 
-    fn parse_event_meta(iter: &mut Split<'_, &str>) -> Result<(Uuid, EventTree), StorageError> {
-        let id = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
+    fn parse_uuid(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<Uuid, StorageError> {
+        iter.next()
+            .ok_or_else(|| StorageError::data_decode(format!("expected {}, found end of line", expected_value)))?
             .parse::<Uuid>()
-            .map_err(|_| StorageError("".into()))?;
+            .or_raise(|| StorageError::data_decode("failed to decode uuid"))
+    }
 
-        let itc_event = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
+    fn parse_itc_event(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<EventTree, StorageError> {
+        iter.next()
+            .ok_or_else(|| StorageError::data_decode(format!("expected {}, found end of line", expected_value)))?
             .parse::<EventTree>()
-            .map_err(|_| StorageError("".into()))?;
+            .or_raise(|| StorageError::data_decode("failed to decode itc_event"))
+    }
+
+    fn parse_bool(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<bool, StorageError> {
+        iter.next()
+            .ok_or_else(|| StorageError::data_decode(format!("expected {}, found end of line", expected_value)))?
+            .parse::<bool>()
+            .or_raise(|| StorageError::data_decode("failed to decode bool"))
+    }
+
+    fn parse_event_meta(iter: &mut Split<'_, &str>) -> Result<(Uuid, EventTree), StorageError> {
+        let id = FileStorage::parse_uuid(iter, "id")?;
+        let itc_event = FileStorage::parse_itc_event(iter, "itc event")?;
 
         Ok((id, itc_event))
     }
 
-    fn save_head_creation(&mut self, event: &HeadEvent) -> Option<String> {
+    fn serialize_head_creation(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::Creation { id, itc_event, template_id, name, description } = event {
             Some(format!(
                 "Creation {} {} {} {} {}\n",
@@ -117,17 +131,13 @@ impl FileStorage {
     }
 
     fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
-        let template_id = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
-            .parse::<Uuid>()
-            .map_err(|_| StorageError("".into()))?;
+        let template_id = FileStorage::parse_uuid(iter, "template id")?;
         let template_id = (!template_id.is_nil()).then_some(template_id);
 
         let name = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
+            .ok_or_else(|| StorageError::data_decode("expected name, found end of line"))?
             .to_string();
 
         let description = iter.next()
@@ -136,7 +146,7 @@ impl FileStorage {
         Ok(HeadEvent::Creation { id, itc_event, template_id, name, description })
     }
 
-    fn save_head_name_update(&mut self, event: &HeadEvent) -> Option<String> {
+    fn serialize_head_name_update(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::NameUpdate { id, itc_event, name } = event {
             Some(format!(
                 "NameUpdate {} {} {}\n",
@@ -150,17 +160,16 @@ impl FileStorage {
     }
 
     fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
         let name = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
+            .ok_or_else(|| StorageError::data_decode("expected name, found end of line"))?
             .to_string();
 
         Ok(HeadEvent::NameUpdate { id, itc_event, name })
     }
 
-    fn save_head_description_update(&mut self, event: &HeadEvent) -> Option<String> {
+    fn serialize_head_description_update(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::DescriptionUpdate { id, itc_event, description } = event {
             Some(format!(
                 "DescriptionUpdate {} {} {}\n",
@@ -174,17 +183,16 @@ impl FileStorage {
     }
 
     fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
         let description = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
+            .ok_or_else(|| StorageError::data_decode("expected description, found end of line"))?
             .to_string();
 
         Ok(HeadEvent::DescriptionUpdate { id, itc_event, description })
     }
 
-    fn save_head_completed_update(&mut self, event: &HeadEvent) -> Option<String> {
+    fn serialize_head_completed_update(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::CompletedUpdate { id, itc_event, completed } = event {
             Some(format!(
                 "CompletedUpdate {} {} {}\n",
@@ -198,18 +206,13 @@ impl FileStorage {
     }
 
     fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
-
-        let completed = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
-            .parse::<bool>()
-            .map_err(|_| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let completed = FileStorage::parse_bool(iter, "completed")?;
 
         Ok(HeadEvent::CompletedUpdate { id, itc_event, completed })
     }
 
-    fn save_head_deletion(&mut self, event: &HeadEvent) -> Option<String> {
+    fn serialize_head_deletion(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::Deletion { id, itc_event } = event {
             Some(format!(
                 "Deletion {} {}\n",
@@ -222,8 +225,7 @@ impl FileStorage {
     }
 
     fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
         Ok(HeadEvent::Deletion { id, itc_event })
     }
@@ -236,8 +238,8 @@ impl FileStorage {
             Some("DescriptionUpdate") => FileStorage::parse_head_description_update(&mut parts),
             Some("CompletedUpdate") => FileStorage::parse_head_completed_update(&mut parts),
             Some("Deletion") => FileStorage::parse_head_deletion(&mut parts),
-            Some(_) => bail!(StorageError("".into())),
-            None => bail!(StorageError("".into())),
+            Some(prefix) => bail!(StorageError::data_decode(format!("unexpected prefix '{}'", prefix))),
+            None => bail!(StorageError::data_decode("expected prefix, found end of line")),
         }?;
         Ok((line.len() as u64, head))
     }
@@ -248,14 +250,16 @@ impl FileStorage {
             .map(|line| {
                 match line {
                     Ok(l) => FileStorage::load_head_event(&l),
-                    Err(e) => Err(e).or_raise(|| StorageError("".into())),
+                    Err(e) => Err(e).or_raise(||
+                        StorageError::backend_read("unable to load line")
+                    ),
                 }
             })
             .collect::<Result<Vec<(u64, HeadEvent)>, StorageError>>()
-            .or_raise(|| StorageError("".into()))
+            .or_raise(|| StorageError::data_decode("unable to parse all lines"))
     }
 
-    fn save_item_creation(&mut self, event: &ItemEvent) -> Option<String> {
+    fn serialize_item_creation(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::Creation { id, itc_event, head_id, name, position } = event {
             Some(format!(
                 "Creation {} {} {} {} {}\n",
@@ -271,26 +275,22 @@ impl FileStorage {
     }
 
     fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
-        let head_id = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
-            .parse::<Uuid>()
-            .map_err(|_| StorageError("".into()))?;
+        let head_id = FileStorage::parse_uuid(iter, "head id")?;
 
         let name = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
+            .ok_or_else(|| StorageError::data_decode("expected name, found end of line"))?
             .to_string();
 
         let position = iter.next()
-            .ok_or_else(|| StorageError("".into()))?;
+            .ok_or_else(|| StorageError::data_decode("expected position, found end of line"))?;
         let position = FractionalIndex::from_hex_string(position);
 
         Ok(ItemEvent::Creation { id, itc_event, head_id, name, position })
     }
 
-    fn save_item_name_update(&mut self, event: &ItemEvent) -> Option<String> {
+    fn serialize_item_name_update(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::NameUpdate { id, itc_event, name } = event {
             Some(format!(
                 "NameUpdate {} {} {}\n",
@@ -304,17 +304,16 @@ impl FileStorage {
     }
 
     fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
         let name = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
+            .ok_or_else(|| StorageError::data_decode("expected name, found end of line"))?
             .to_string();
 
         Ok(ItemEvent::NameUpdate { id, itc_event, name })
     }
 
-    fn save_item_position_update(&mut self, event: &ItemEvent) -> Option<String> {
+    fn serialize_item_position_update(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::PositionUpdate { id, itc_event, position } = event {
             Some(format!(
                 "PositionUpdate {} {} {}\n",
@@ -328,17 +327,16 @@ impl FileStorage {
     }
 
     fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
         let position = iter.next()
-            .ok_or_else(|| StorageError("".into()))?;
+            .ok_or_else(|| StorageError::data_decode("expected position, found end of line"))?;
         let position = FractionalIndex::from_hex_string(position);
 
         Ok(ItemEvent::PositionUpdate { id, itc_event, position })
     }
 
-    fn save_item_checked_update(&mut self, event: &ItemEvent) -> Option<String> {
+    fn serialize_item_checked_update(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::CheckedUpdate { id, itc_event, checked } = event {
             Some(format!(
                 "CheckedUpdate {} {} {}\n",
@@ -352,18 +350,13 @@ impl FileStorage {
     }
 
     fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
-
-        let checked = iter.next()
-            .ok_or_else(|| StorageError("".into()))?
-            .parse::<bool>()
-            .map_err(|_| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let checked = FileStorage::parse_bool(iter, "checked")?;
 
         Ok(ItemEvent::CheckedUpdate { id, itc_event, checked })
     }
 
-    fn save_item_deletion(&mut self, event: &ItemEvent) -> Option<String> {
+    fn serialize_item_deletion(&mut self, event: &ItemEvent) -> Option<String> {
         if let ItemEvent::Deletion { id, itc_event } = event {
             Some(format!(
                 "Deletion {} {}\n",
@@ -376,8 +369,7 @@ impl FileStorage {
     }
 
     fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
-        let (id, itc_event) = FileStorage::parse_event_meta(iter)
-            .or_raise(|| StorageError("".into()))?;
+        let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
 
         Ok(ItemEvent::Deletion { id, itc_event })
     }
@@ -390,8 +382,8 @@ impl FileStorage {
             Some("PositionUpdate") => FileStorage::parse_item_position_update(&mut parts),
             Some("CheckedUpdate") => FileStorage::parse_item_checked_update(&mut parts),
             Some("Deletion") => FileStorage::parse_item_deletion(&mut parts),
-            Some(_) => bail!(StorageError("".into())),
-            None => bail!(StorageError("".into())),
+            Some(prefix) => bail!(StorageError::data_decode(format!("unexpected prefix '{}'", prefix))),
+            None => bail!(StorageError::data_decode("expected prefix, found end of line")),
         }?;
         Ok((line.len() as u64, event))
     }
@@ -402,11 +394,13 @@ impl FileStorage {
             .map(|line| {
                 match line {
                     Ok(l) => FileStorage::load_item_event(&l),
-                    Err(e) => Err(e).or_raise(|| StorageError("".into())),
+                    Err(e) => Err(e).or_raise(||
+                        StorageError::backend_read("unable to load line")
+                    ),
                 }
             })
             .collect::<Result<Vec<(u64, ItemEvent)>, StorageError>>()
-            .or_raise(|| StorageError("".into()))
+            .or_raise(|| StorageError::data_decode("unable to parse all lines"))
     }
 }
 
@@ -424,7 +418,7 @@ impl Store for FileStorage {
 
         while let Some(mut rollback_function) = self.rollback_stack.pop() {
             rollback_function(self)
-                .or_raise(|| StorageError("".into()))?
+                .or_raise(|| StorageError::transaction_rollback_partial("failed to rollback all transaction steps"))?
         }
 
         self.in_transaction = false;
@@ -445,20 +439,20 @@ impl Store for FileStorage {
         }
 
         self.stamp_file.set_len(0)
-            .or_raise(|| StorageError("failed to truncate stamp file".into()))?;
+            .or_raise(|| StorageError::backend_specific("failed to truncate stamp file"))?;
 
         self.stamp_file.write(stamp.to_string().as_bytes())
-            .or_raise(|| StorageError("failed to write stamp to file".into()))?;
+            .or_raise(|| StorageError::backend_write("failed to write stamp to file"))?;
 
         Ok(())
     }
 
     fn load_stamp(&mut self) -> Result<Stamp, StorageError> {
-        let mut stump_buf = String::new();
-        self.stamp_file.read_to_string(&mut stump_buf)
-            .or_raise(|| StorageError("failed to read stamp file".into()))?;
-        let stamp = Stamp::from_str(&stump_buf)
-            .or_raise(|| StorageError("failed to decode stamp".into()))?;
+        let mut stamp_buf = String::new();
+        self.stamp_file.read_to_string(&mut stamp_buf)
+            .or_raise(|| StorageError::backend_read("failed to read stamp file"))?;
+        let stamp = Stamp::from_str(&stamp_buf)
+            .or_raise(|| StorageError::data_decode(format!("failed to parse stamp '{}'", &stamp_buf)))?;
 
         Ok(stamp)
     }
@@ -466,15 +460,17 @@ impl Store for FileStorage {
     fn save_head_event(&mut self, event: &HeadEvent) -> Result<(), StorageError> {
         use HeadEvent::*;
         let (line, id) = match event {
-            Creation { id, .. } => self.save_head_creation(event).and_then(|s| Some((s, id.clone()))),
-            NameUpdate { id, .. } => self.save_head_name_update(event).and_then(|s| Some((s, id.clone()))),
-            DescriptionUpdate { id, .. } => self.save_head_description_update(event).and_then(|s| Some((s, id.clone()))),
-            CompletedUpdate { id, .. } => self.save_head_completed_update(event).and_then(|s| Some((s, id.clone()))),
-            Deletion { id, .. } => self.save_head_deletion(event).and_then(|s| Some((s, id.clone()))),
-        }.ok_or_else(|| StorageError("".into()))?;
+            Creation { .. } => self.serialize_head_creation(event),
+            NameUpdate { .. } => self.serialize_head_name_update(event),
+            DescriptionUpdate { .. } => self.serialize_head_description_update(event),
+            CompletedUpdate { .. } => self.serialize_head_completed_update(event),
+            Deletion { .. } => self.serialize_head_deletion(event),
+        }
+        .and_then(|s| Some((s, event.id().clone())))
+        .ok_or_else(|| StorageError::data_encode(format!("unable to serialize head event with id {}", event.id())))?;
 
         self.head_log_file.file.write(line.as_bytes())
-            .or_raise(|| StorageError(format!("failed to write line to file")))?;
+            .or_raise(|| StorageError::backend_write(format!("failed to write line to file '{}'", line)))?;
 
         if self.in_transaction {
             let cloned_id = id.clone();
@@ -494,38 +490,40 @@ impl Store for FileStorage {
         )
     }
 
-    fn delete_head_event(&mut self, id: &uuid::Uuid) -> Result<HeadEvent, StorageError> {
+    fn delete_head_event(&mut self, id: &Uuid) -> Result<HeadEvent, StorageError> {
         let index = match self.head_log_file.event_positions.binary_search_by_key(id, |i| i.1) {
             Ok(i) => i,
-            Err(_) => bail!(StorageError("".into())),
+            Err(_) => bail!(StorageError::backend_specific(
+                format!("unable to find position of head event with id '{}'", id)
+            )),
         };
 
         let (offset, _) = self.head_log_file.event_positions.remove(index);
 
         self.head_log_file.file.seek(SeekFrom::Start(offset))
-            .or_raise(|| StorageError("".into()))?;
+            .or_raise(|| StorageError::backend_specific("failed to seek position in head event file"))?;
 
         let mut buffer = String::new();
         self.head_log_file.file.read_to_string(&mut buffer)
-            .or_raise(|| StorageError("".into()))?;
+            .or_raise(|| StorageError::backend_read("failed to read head event from file"))?;
 
         let (line, remainder) = if index < self.head_log_file.event_positions.len() {
             let next_offset = self.head_log_file.event_positions[index].0;
             let first_line_size = (next_offset-offset) as usize;
             let line_slice = buffer.get(0 .. first_line_size-1)
-                .ok_or_raise(|| StorageError("".into()))?;
+                .ok_or_raise(|| StorageError::backend_specific("failed to calculate indexes for string split proplerly"))?;
             let remainder_slice = buffer.get(first_line_size .. buffer.len()-1)
-                .ok_or_raise(|| StorageError("".into()))?;
+                .ok_or_raise(|| StorageError::backend_specific("failed to calculate indexes for string split proplerly"))?;
 
             (line_slice, Some((remainder_slice, first_line_size as u64)))
         } else {
             let line_slice = buffer.get(0 .. buffer.len()-1)
-                .ok_or_raise(|| StorageError("".into()))?;
+                .ok_or_raise(|| StorageError::backend_specific("failed to calculate indexes for string split proplerly"))?;
             (line_slice, None)
         };
-        
+
         let head_event = FileStorage::load_head_event(line)
-            .or_raise(|| StorageError("".into()))?
+            .or_raise(|| StorageError::backend_read("failed to read head event from file"))?
             .1;
 
         if self.in_transaction {
@@ -534,11 +532,11 @@ impl Store for FileStorage {
         }
 
         self.head_log_file.file.set_len(offset)
-            .or_raise(|| StorageError(format!("")))?;
+            .or_raise(|| StorageError::backend_specific("failed to truncate head event file"))?;
 
         if let Some((remainder, diff)) = remainder {
             self.head_log_file.file.write(remainder.as_bytes())
-                .or_raise(|| StorageError(format!("")))?;
+                .or_raise(|| StorageError::backend_write("failed to write remainder to head event file"))?;
             self.head_log_file.event_positions.iter_mut()
                 .skip(index)
                 .for_each(|tuple| tuple.0 -= diff);
@@ -550,15 +548,17 @@ impl Store for FileStorage {
     fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError> {
         use ItemEvent::*;
         let (line, id) = match event {
-            Creation { id, .. } =>  self.save_item_creation(event).and_then(|s| Some((s, id.clone()))),
-            NameUpdate { id, .. } =>  self.save_item_name_update(event).and_then(|s| Some((s, id.clone()))),
-            PositionUpdate { id, .. } =>  self.save_item_position_update(event).and_then(|s| Some((s, id.clone()))),
-            CheckedUpdate { id, .. } =>  self.save_item_checked_update(event).and_then(|s| Some((s, id.clone()))),
-            Deletion { id, .. } =>  self.save_item_deletion(event).and_then(|s| Some((s, id.clone()))),
-        }.ok_or_else(|| StorageError("".into()))?;
+            Creation { .. } =>  self.serialize_item_creation(event),
+            NameUpdate { .. } =>  self.serialize_item_name_update(event),
+            PositionUpdate { .. } =>  self.serialize_item_position_update(event),
+            CheckedUpdate { .. } =>  self.serialize_item_checked_update(event),
+            Deletion { .. } =>  self.serialize_item_deletion(event),
+        }
+        .and_then(|s| Some((s, event.id().clone())))
+        .ok_or_else(|| StorageError::data_encode(format!("unable to serialize item event with id {}", event.id())))?;
 
         self.item_log_file.file.write(line.as_bytes())
-            .or_raise(|| StorageError(format!("failed to write line to file")))?;
+            .or_raise(|| StorageError::backend_write(format!("failed to write line to file '{}'", line)))?;
 
         if self.in_transaction {
             let cloned_id = id.clone();
@@ -582,35 +582,37 @@ impl Store for FileStorage {
     fn delete_item_event(&mut self, id: &Uuid) -> Result<ItemEvent, StorageError> {
         let index = match self.item_log_file.event_positions.binary_search_by_key(id, |i| i.1) {
             Ok(i) => i,
-            Err(_) => bail!(StorageError("".into())),
+            Err(_) => bail!(StorageError::backend_specific(
+                format!("unable to find position of item event with id '{}'", id)
+            )),
         };
 
         let (offset, _) = self.item_log_file.event_positions.remove(index);
 
         self.item_log_file.file.seek(SeekFrom::Start(offset))
-            .or_raise(|| StorageError("".into()))?;
+            .or_raise(|| StorageError::backend_specific("failed to seek position in item event file"))?;
 
         let mut buffer = String::new();
         self.item_log_file.file.read_to_string(&mut buffer)
-            .or_raise(|| StorageError("".into()))?;
+            .or_raise(|| StorageError::backend_read("failed to read item event from file"))?;
 
         let (line, remainder) = if index < self.item_log_file.event_positions.len() {
             let next_offset = self.item_log_file.event_positions[index].0;
             let first_line_size = (next_offset-offset) as usize;
             let line_slice = buffer.get(0 .. first_line_size-1)
-                .ok_or_raise(|| StorageError("".into()))?;
+                .ok_or_raise(|| StorageError::backend_specific("failed to calculate indexes for string split proplerly"))?;
             let remainder_slice = buffer.get(first_line_size .. buffer.len()-1)
-                .ok_or_raise(|| StorageError("".into()))?;
+                .ok_or_raise(|| StorageError::backend_specific("failed to calculate indexes for string split proplerly"))?;
 
             (line_slice, Some((remainder_slice, first_line_size as u64)))
         } else {
             let line_slice = buffer.get(0 .. buffer.len()-1)
-                .ok_or_raise(|| StorageError("".into()))?;
+                .ok_or_raise(|| StorageError::backend_specific("failed to calculate indexes for string split proplerly"))?;
             (line_slice, None)
         };
-        
+
         let item_event = FileStorage::load_item_event(line)
-            .or_raise(|| StorageError("".into()))?
+            .or_raise(|| StorageError::backend_read("failed to read item event from file"))?
             .1;
 
         if self.in_transaction {
@@ -619,11 +621,11 @@ impl Store for FileStorage {
         }
 
         self.item_log_file.file.set_len(offset)
-            .or_raise(|| StorageError(format!("")))?;
+            .or_raise(|| StorageError::backend_specific("failed to truncate item event file"))?;
 
         if let Some((remainder, diff)) = remainder {
             self.item_log_file.file.write(remainder.as_bytes())
-                .or_raise(|| StorageError(format!("")))?;
+                .or_raise(|| StorageError::backend_write("failed to write remainder to item event file"))?;
             self.item_log_file.event_positions.iter_mut()
                 .skip(index)
                 .for_each(|tuple| tuple.0 -= diff);

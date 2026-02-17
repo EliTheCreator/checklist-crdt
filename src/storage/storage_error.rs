@@ -7,6 +7,9 @@ pub enum ErrorKind {
     BackendOpen,
     BackendRead,
     BackendWrite,
+    BackendSpecific,
+    DataDecode,
+    DataEncode,
     StampNone,
     StampInvalid,
     TransactionRollbackPartial,
@@ -37,6 +40,18 @@ impl StorageError {
         Self { kind: ErrorKind::BackendWrite, message: message.into() }
     }
 
+    pub fn backend_specific(message: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::BackendSpecific, message: message.into() }
+    }
+
+    pub fn data_decode(message: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::DataDecode, message: message.into() }
+    }
+
+    pub fn data_encode(message: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::DataEncode, message: message.into() }
+    }
+
     pub fn stamp_none(message: impl Into<String>) -> Self {
         Self { kind: ErrorKind::StampNone, message: message.into() }
     }
@@ -61,8 +76,11 @@ impl Display for StorageError {
             BackendOpen => write!(f, "backend open error: {}", self.message),
             BackendRead => write!(f, "backend read error: {}", self.message),
             BackendWrite => write!(f, "backend write error: {}", self.message),
-            StampNone => write!(f, "no stamp error: {}", self.message),
-            StampInvalid => write!(f, "invalid stamp error: {}", self.message),
+            BackendSpecific => write!(f, "backend specific error: {}", self.message),
+            DataDecode => write!(f, "data decode error: {}", self.message),
+            DataEncode => write!(f, "data encode error: {}", self.message),
+            StampNone => write!(f, "stamp missing error: {}", self.message),
+            StampInvalid => write!(f, "stamp invalid error: {}", self.message),
             TransactionRollbackPartial => write!(f, "transaction rollback partial error: {}", self.message),
             TransactionRollbackFull => write!(f, "transaction rollback full error: {}", self.message),
         }
