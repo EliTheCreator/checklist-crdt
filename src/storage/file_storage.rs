@@ -480,11 +480,18 @@ impl Store for FileStorage {
     }
 
     fn load_stamp(&mut self) -> Result<Stamp, StorageError> {
+        let file_size = self.stamp_file.metadata()
+            .or_raise(|| StorageError::backend_read("failed to read stamp file"))?
+            .len();
+        if file_size == 0 {
+            bail!(StorageError::stamp_none("stamp file does not contain a stamp"))
+        }
+
         let mut stamp_buf = String::new();
         self.stamp_file.read_to_string(&mut stamp_buf)
             .or_raise(|| StorageError::backend_read("failed to read stamp file"))?;
         let stamp = Stamp::from_str(&stamp_buf)
-            .or_raise(|| StorageError::data_decode(format!("failed to parse stamp '{}'", &stamp_buf)))?;
+            .or_raise(|| StorageError::stamp_invalid(format!("failed to parse stamp '{}'", &stamp_buf)))?;
 
         Ok(stamp)
     }
