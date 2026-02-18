@@ -449,8 +449,12 @@ impl Store for FileStorage {
         }
 
         while let Some(mut rollback_function) = self.rollback_stack.pop() {
-            rollback_function(self)
-                .or_raise(|| StorageError::transaction_rollback_partial("failed to rollback all transaction steps"))?
+            if let Err(e) = rollback_function(self) {
+                self.rollback_stack.clear();
+                return Result::Err(e.raise(
+                    StorageError::transaction_rollback_partial("failed to rollback all transaction steps")
+                ));
+            }
         }
 
         self.in_transaction = false;
@@ -461,6 +465,7 @@ impl Store for FileStorage {
         if !self.in_transaction {
             return  Ok(false);
         }
+        self.rollback_stack.clear();
         Ok(true)
     }
 
