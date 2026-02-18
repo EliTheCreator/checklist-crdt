@@ -1,4 +1,4 @@
-use exn::{Exn, Result, ResultExt};
+use exn::{bail, Exn, Result, ResultExt};
 use itc::{IntervalTreeClock, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::crdt::crdt_error::CrdtError;
 use crate::storage::model::checklist::head::HeadEvent;
 use crate::storage::model::checklist::item::ItemEvent;
-use crate::storage::storage_error::StorageError;
+use crate::storage::storage_error::{StorageError, ErrorKind};
 use crate::storage::store::Store;
 use crate::transport::transport::Transport;
 
@@ -18,38 +18,87 @@ pub struct ChecklistCrdt<S: Store, T: Transport> {
 }
 
 impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
-    pub fn new(storage: S, transport: T) -> Self {
-        ChecklistCrdt {
+    pub fn new(mut storage: S, transport: T) -> Result<Self, CrdtError> {
+        let stamp = match storage.load_stamp() {
+            Ok(s) => s,
+            Err(e) if e.kind == ErrorKind::StampNone =>{
+                let stamp = Stamp::seed();
+                storage.save_stamp(&stamp)
+                    .or_raise(|| CrdtError::fatal("failed to save new stamp"))?;
+                stamp
+            },
+            Err(_) => bail!(CrdtError::fatal("")),
+        };
+
+        Ok(ChecklistCrdt {
             storage: storage,
             transport: transport,
-            itc_stamp: Stamp::seed(),
+            itc_stamp: stamp,
+        })
+    }
+
+    fn abort_transaction(
+        &mut self,
+        e1: Exn<StorageError>,
+        text: &str,
+    ) -> Exn<CrdtError> {
+        let success_text = format!("{text}. all operations have been reverted");
+        let failure_text = format!("{text}. unable to reverse all operations. crdt is in inconsistent state");
+        match self.storage.abort_transaction() {
+            Ok(_) => {
+                e1.raise(CrdtError::recovered(success_text))
+            },
+            Err(e2) => {
+                Exn::raise_all(CrdtError::fatal(failure_text), vec![e1, e2])
+            },
         }
     }
 
-    fn save_stamp_or_revert(
+    fn save_checklist_head_event(
         &mut self,
-        itc_stamp: Stamp,
-        reversion_f: fn(&mut ChecklistCrdt<S, T>, &Uuid) -> Result<(), StorageError>,
-        id: Uuid,
-        success_text: &str,
-        failure_text: &str,
-    ) -> Result<Uuid, CrdtError> {
-        match self.storage.save_stamp(&itc_stamp) {
-            Ok(_) => {
-                self.itc_stamp = itc_stamp;
-                Ok(id)
-            },
-            Err(e1) => {
-                match reversion_f(self, &id) {
-                    Ok(_) => {
-                        Result::Err(e1).or_raise(|| CrdtError::Recovered(success_text.into()))
-                    },
-                    Err(e2) => {
-                        Result::Err(Exn::raise_all(CrdtError::Fatal(failure_text.into()), vec![e1, e2]))
-                    },
-                }
-            }
-        }
+        stamp: Stamp,
+        event: HeadEvent,
+    ) -> Result<(), CrdtError> {
+        self.storage.start_transaction()
+            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+
+        self.storage.save_head_event(&event).map_err(|e|
+            self.abort_transaction(e, "crdt unable to store head event")
+        )?;
+
+        let _ = self.storage.save_stamp(&stamp).map_err(|e|
+            self.abort_transaction(e, "crdt unable to save stamp")
+        )?;
+
+        let _ = self.storage.commit_transaction().map_err(|e|
+            self.abort_transaction(e, "crdt unable commit transaction")
+        )?;
+
+        Ok(())
+    }
+
+    fn erase_checklist_head(
+        &mut self,
+        id: &Uuid,
+    ) -> Result<HeadEvent, CrdtError> {
+        let stamp = self.itc_stamp.event();
+
+        self.storage.start_transaction()
+            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+
+        let event = self.storage.delete_head_event(id).map_err(|e|
+            self.abort_transaction(e, "crdt unable to store head event")
+        )?;
+
+        let _ = self.storage.save_stamp(&stamp).map_err(|e|
+            self.abort_transaction(e, "crdt unable to save stamp")
+        )?;
+
+        let _ = self.storage.commit_transaction().map_err(|e|
+            self.abort_transaction(e, "crdt unable commit transaction")
+        )?;
+
+        Ok(event)
     }
 
     pub fn add_checklist_head(
@@ -60,21 +109,121 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     ) -> Result<Uuid, CrdtError> {
         let stamp = self.itc_stamp.event();
         let id = Uuid::now_v7();
-        let checklist_head_event = HeadEvent::Creation {
+        let event = HeadEvent::Creation {
             id: id.clone(),
             itc_event: stamp.event_tree(),
             template_id: template_id,
             name: name,
             description: description,
         };
+        
+        self.save_checklist_head_event(stamp, event)?;
+        Ok(id)
+    }
 
-        self.storage.save_head_event(&checklist_head_event)
-            .or_raise(|| CrdtError::Recovered("crdt unable to add checklist head".into()))?;
+    pub fn update_checklist_head_name(
+        &mut self,
+        id: &Uuid,
+        name: String,
+    ) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.event();
+        let event = HeadEvent::NameUpdate {
+            id: id.clone(),
+            itc_event: stamp.event_tree(),
+            name: name,
+        };
 
-        let success_text = "crdt unable to save stamp. addition of checklist head reverted";
-        let failure_text = "crdt unable to save stamp. reversion of checklist head addition failed. crdt is in inconsistent state";
-        let reversion_f = |crdt: &mut ChecklistCrdt<S, T>, id: &Uuid| crdt.storage.delete_head_event(id).map(|_| ());
-        self.save_stamp_or_revert(stamp, reversion_f, id, success_text, failure_text)
+        self.save_checklist_head_event(stamp, event)
+    }
+
+    pub fn update_checklist_head_description(
+        &mut self,
+        id: &Uuid,
+        description: Option<String>,
+    ) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.event();
+        let event = HeadEvent::DescriptionUpdate {
+            id: id.clone(),
+            itc_event: stamp.event_tree(),
+            description: description,
+        };
+
+        self.save_checklist_head_event(stamp, event)
+    }
+
+    pub fn update_checklist_head_completed(
+        &mut self,
+        id: &Uuid,
+        completed: bool,
+    ) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.event();
+        let event = HeadEvent::CompletedUpdate {
+            id: id.clone(),
+            itc_event: stamp.event_tree(),
+            completed: completed,
+        };
+
+        self.save_checklist_head_event(stamp, event)
+    }
+
+    pub fn delete_checklist_head(
+        &mut self,
+        id: &Uuid,
+    ) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.event();
+        let event = HeadEvent::Deletion {
+            id: id.clone(),
+            itc_event: stamp.event_tree(),
+        };
+
+        self.save_checklist_head_event(stamp, event)
+    }
+
+    fn save_checklist_item_event(
+        &mut self,
+        stamp: Stamp,
+        event: ItemEvent,
+    ) -> Result<(), CrdtError> {
+        self.storage.start_transaction()
+            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+
+        self.storage.save_item_event(&event).map_err(|e|
+            self.abort_transaction(e, "crdt unable to store item event")
+        )?;
+
+        let _ = self.storage.save_stamp(&stamp).map_err(|e|
+            self.abort_transaction(e, "crdt unable to save stamp")
+        )?;
+
+        let _ = self.storage.commit_transaction().map_err(|e|
+            self.abort_transaction(e, "crdt unable commit transaction")
+        )?;
+
+        Ok(())
+    }
+
+    fn erase_checklist_item(
+        &mut self,
+        id: &Uuid,
+    ) -> Result<ItemEvent, CrdtError> {
+        let stamp = self.itc_stamp.event();
+
+        self.storage.start_transaction()
+            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+
+        let event = self.storage.delete_item_event(id).map_err(|e|
+            self.abort_transaction(e, "crdt unable to store item event")
+        )?;
+
+        let _ = self.storage.save_stamp(&stamp).map_err(|e|
+            self.abort_transaction(e, "crdt unable to save stamp")
+        )?;
+
+        let _ = self.storage.commit_transaction().map_err(|e|
+            self.abort_transaction(e, "crdt unable commit transaction")
+        )?;
+
+        Ok(event)
     }
 
     pub fn add_checklist_item(
@@ -85,21 +234,74 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     ) -> Result<Uuid, CrdtError> {
         let stamp = self.itc_stamp.event();
         let id = Uuid::now_v7();
-        let checklist_item_event = ItemEvent::Creation {
+        let event = ItemEvent::Creation {
             id: id.clone(),
             itc_event: stamp.event_tree(),
             head_id: head_id,
             name: name,
             position: position,
         };
+        
+        self.save_checklist_item_event(stamp, event)?;
+        Ok(id)
+    }
 
-        self.storage.save_item_event(&checklist_item_event)
-            .or_raise(|| CrdtError::Recovered("crdt unable to add checklist item".into()))?;
+    pub fn update_checklist_item_name(
+        &mut self,
+        id: &Uuid,
+        name: String,
+    ) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.event();
+        let event = ItemEvent::NameUpdate {
+            id: id.clone(),
+            itc_event: stamp.event_tree(),
+            name: name,
+        };
 
-        let success_text = "crdt unable to save stamp. addition of checklist item reverted";
-        let failure_text = "crdt unable to save stamp. reversion of checklist item addition failed. crdt is in inconsistent state";
-        let reversion_f = |crdt: &mut ChecklistCrdt<S, T>, id: &Uuid| crdt.storage.delete_item_event(id).map(|_| ());
-        self.save_stamp_or_revert(stamp, reversion_f, id, success_text, failure_text)
+        self.save_checklist_item_event(stamp, event)
+    }
+
+    pub fn update_checklist_item_position(
+        &mut self,
+        id: &Uuid,
+        position: FractionalIndex,
+    ) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.event();
+        let event = ItemEvent::PositionUpdate {
+            id: id.clone(),
+            itc_event: stamp.event_tree(),
+            position: position,
+        };
+
+        self.save_checklist_item_event(stamp, event)
+    }
+
+    pub fn update_checklist_item_checked(
+        &mut self,
+        id: &Uuid,
+        checked: bool,
+    ) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.event();
+        let event = ItemEvent::CheckedUpdate {
+            id: id.clone(),
+            itc_event: stamp.event_tree(),
+            checked: checked,
+        };
+
+        self.save_checklist_item_event(stamp, event)
+    }
+
+    pub fn delete_checklist_item(
+        &mut self,
+        id: &Uuid,
+    ) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.event();
+        let event: ItemEvent = ItemEvent::Deletion {
+            id: id.clone(),
+            itc_event: stamp.event_tree(),
+        };
+
+        self.save_checklist_item_event(stamp, event)
     }
 }
 
@@ -126,6 +328,22 @@ mod test {
 
         let transport = DummyTransport {};
 
-        let crdt = ChecklistCrdt::new(file_store, transport);
+        let mut crdt = ChecklistCrdt::new(file_store, transport).unwrap();
+        let index = FractionalIndex::default();
+        crdt.add_checklist_item(
+            Uuid::now_v7(),
+            "test item".into(),
+            FractionalIndex::new_after(&index),
+        ).unwrap();
+        crdt.add_checklist_item(
+            Uuid::now_v7(),
+            "test 4 item".into(),
+            FractionalIndex::new_after(&index),
+        ).unwrap();
+        crdt.add_checklist_item(
+            Uuid::now_v7(),
+            "test 3 asdf item".into(),
+            FractionalIndex::new_before(&index),
+        ).unwrap();
     }
 }
