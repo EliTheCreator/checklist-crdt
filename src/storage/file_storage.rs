@@ -490,18 +490,23 @@ impl Store for FileStorage {
     }
 
     fn save_head_event(&mut self, event: &HeadEvent) -> Result<(), StorageError> {
-        use HeadEvent::*;
-        let (line, id) = match event {
-            Creation { .. } => self.serialize_head_creation(event),
-            NameUpdate { .. } => self.serialize_head_name_update(event),
-            DescriptionUpdate { .. } => self.serialize_head_description_update(event),
-            CompletedUpdate { .. } => self.serialize_head_completed_update(event),
-            Deletion { .. } => self.serialize_head_deletion(event),
+        let (line, id) = {
+            use HeadEvent::*;
+            match event {
+                Creation { .. } => self.serialize_head_creation(event),
+                NameUpdate { .. } => self.serialize_head_name_update(event),
+                DescriptionUpdate { .. } => self.serialize_head_description_update(event),
+                CompletedUpdate { .. } => self.serialize_head_completed_update(event),
+                Deletion { .. } => self.serialize_head_deletion(event),
+            }
         }
         .and_then(|s| Some((s, event.id().clone())))
         .ok_or_else(|| StorageError::data_encode(format!("unable to serialize head event with id {}", event.id())))?;
 
-        let index = match self.head_log_file.event_positions.binary_search_by_key(&id, |i| i.1) {
+        let file = &mut self.head_log_file.file;
+        let event_positions = &mut self.head_log_file.event_positions;
+
+        let index = match event_positions.binary_search_by_key(&id, |i| i.1) {
             Ok(_) => bail!(StorageError::backend_specific(
                 format!("head event with id '{id}' is already in file")
             )),
@@ -509,37 +514,37 @@ impl Store for FileStorage {
         };
 
         let line_size = line.len() as u64;
-        let start = self.head_log_file.event_positions.get(index-1)
+        let start = event_positions.get(index-1)
             .map(|t| t.0)
             .unwrap_or(0);
         let end = start+line_size;
 
-        if index == self.head_log_file.event_positions.len() {
-            self.head_log_file.file.write(line.as_bytes())
+        if index == event_positions.len() {
+            file.write(line.as_bytes())
                 .or_raise(|| StorageError::backend_write(format!("failed to write head event '{id}' to file")))?;
-            self.head_log_file.event_positions.push((end, id.clone()));
+            event_positions.push((end, id.clone()));
         } else {
-            self.head_log_file.file.seek(SeekFrom::Start(start))
+            file.seek(SeekFrom::Start(start))
                 .or_raise(|| StorageError::backend_specific("failed to seek position in head event file"))?;
 
             let mut remainder = String::new();
-            self.head_log_file.file.read_to_string(&mut remainder)
+            file.read_to_string(&mut remainder)
                 .or_raise(|| StorageError::backend_read("failed to read remainder from head event file"))?;
 
-            self.head_log_file.file.set_len(start)
+            file.set_len(start)
                 .or_raise(|| StorageError::backend_specific("failed to truncate head event file"))?;
 
-            self.head_log_file.file.write(line.as_bytes())
+            file.write(line.as_bytes())
                 .or_raise(|| StorageError::backend_write(format!("failed to write head event '{id}' to file")))?;
 
-            self.head_log_file.file.write(remainder.as_bytes())
+            file.write(remainder.as_bytes())
                 .or_raise(|| StorageError::backend_write("failed to write remainder to head event file"))?;
 
-            self.head_log_file.event_positions.iter_mut()
+            event_positions.iter_mut()
                 .skip(index)
                 .for_each(|tuple| tuple.0 += line_size);
 
-            self.head_log_file.event_positions.insert(index, (end, id.clone()));
+            event_positions.insert(index, (end, id.clone()));
         }
 
         if self.in_transaction {
@@ -559,30 +564,33 @@ impl Store for FileStorage {
     }
 
     fn delete_head_event(&mut self, id: &Uuid) -> Result<HeadEvent, StorageError> {
-        let index = match self.head_log_file.event_positions.binary_search_by_key(id, |i| i.1) {
+        let file = &mut self.head_log_file.file;
+        let event_positions = &mut self.head_log_file.event_positions;
+
+        let index = match event_positions.binary_search_by_key(id, |i| i.1) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
                 format!("unable to find position of head event with id '{id}'")
             )),
         };
 
-        let start = self.head_log_file.event_positions.get(index-1)
+        let start = event_positions.get(index-1)
             .map(|t| t.0)
             .unwrap_or(0);
-        let end = self.head_log_file.event_positions.remove(index).0;
+        let end = event_positions.remove(index).0;
         let line_size = end-start;
 
-        self.head_log_file.file.seek(SeekFrom::Start(start))
+        file.seek(SeekFrom::Start(start))
             .or_raise(|| StorageError::backend_specific("failed to seek position in head event file"))?;
 
         let mut buffer = String::new();
-        self.head_log_file.file.read_to_string(&mut buffer)
+        file.read_to_string(&mut buffer)
             .or_raise(|| StorageError::backend_read("failed to read head event from file"))?;
 
         let head_slice = buffer.get(0 .. (line_size-1) as usize)
             .ok_or_raise(|| StorageError::backend_specific("failed to calculate indices for string split properly"))?;
 
-        let remainder_slice = (index < self.head_log_file.event_positions.len()).then(||
+        let remainder_slice = (index < event_positions.len()).then(||
                 buffer.get(line_size as usize .. buffer.len()-1)
             )
             .ok_or_raise(|| StorageError::backend_specific("failed to calculate indices for string split properly"))?;
@@ -591,38 +599,43 @@ impl Store for FileStorage {
             .or_raise(|| StorageError::backend_read("failed to read head event from file"))?
             .1;
 
+        file.set_len(end)
+            .or_raise(|| StorageError::backend_specific("failed to truncate head event file"))?;
+
+        if let Some(remainder) = remainder_slice {
+            file.write(remainder.as_bytes())
+                .or_raise(|| StorageError::backend_write("failed to write remainder to head event file"))?;
+            event_positions.iter_mut()
+                .skip(index)
+                .for_each(|tuple| tuple.0 -= line_size);
+        };
+
         if self.in_transaction {
             let cloned_head_event = head_event.clone();
             self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_head_event(&cloned_head_event)));
         }
 
-        self.head_log_file.file.set_len(end)
-            .or_raise(|| StorageError::backend_specific("failed to truncate head event file"))?;
-
-        if let Some(remainder) = remainder_slice {
-            self.head_log_file.file.write(remainder.as_bytes())
-                .or_raise(|| StorageError::backend_write("failed to write remainder to head event file"))?;
-            self.head_log_file.event_positions.iter_mut()
-                .skip(index)
-                .for_each(|tuple| tuple.0 -= line_size);
-        };
-
         Ok(head_event)
     }
 
     fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError> {
-        use ItemEvent::*;
-        let (line, id) = match event {
-            Creation { .. } =>  self.serialize_item_creation(event),
-            NameUpdate { .. } =>  self.serialize_item_name_update(event),
-            PositionUpdate { .. } =>  self.serialize_item_position_update(event),
-            CheckedUpdate { .. } =>  self.serialize_item_checked_update(event),
-            Deletion { .. } =>  self.serialize_item_deletion(event),
+        let (line, id) = {
+            use ItemEvent::*;
+            match event {
+                Creation { .. } =>  self.serialize_item_creation(event),
+                NameUpdate { .. } =>  self.serialize_item_name_update(event),
+                PositionUpdate { .. } =>  self.serialize_item_position_update(event),
+                CheckedUpdate { .. } =>  self.serialize_item_checked_update(event),
+                Deletion { .. } =>  self.serialize_item_deletion(event),
+            }
         }
         .and_then(|s| Some((s, event.id().clone())))
         .ok_or_else(|| StorageError::data_encode(format!("unable to serialize item event with id {}", event.id())))?;
 
-        let index = match self.item_log_file.event_positions.binary_search_by_key(&id, |i| i.1) {
+        let file = &mut self.item_log_file.file;
+        let event_positions = &mut self.item_log_file.event_positions;
+
+        let index = match event_positions.binary_search_by_key(&id, |i| i.1) {
             Ok(_) => bail!(StorageError::backend_specific(
                 format!("item event with id '{id}' is already in file")
             )),
@@ -630,37 +643,37 @@ impl Store for FileStorage {
         };
 
         let line_size = line.len() as u64;
-        let start = self.item_log_file.event_positions.get(index-1)
+        let start = event_positions.get(index-1)
             .map(|t| t.0)
             .unwrap_or(0);
         let end = start+line_size;
 
-        if index == self.item_log_file.event_positions.len() {
-            self.item_log_file.file.write(line.as_bytes())
+        if index == event_positions.len() {
+            file.write(line.as_bytes())
                 .or_raise(|| StorageError::backend_write(format!("failed to write item event '{id}' to file")))?;
-            self.item_log_file.event_positions.push((end, id.clone()));
+            event_positions.push((end, id.clone()));
         } else {
-            self.item_log_file.file.seek(SeekFrom::Start(start))
+            file.seek(SeekFrom::Start(start))
                 .or_raise(|| StorageError::backend_specific("failed to seek position in item event file"))?;
 
             let mut remainder = String::new();
-            self.item_log_file.file.read_to_string(&mut remainder)
+            file.read_to_string(&mut remainder)
                 .or_raise(|| StorageError::backend_read("failed to read remainder from item event file"))?;
 
-            self.item_log_file.file.set_len(start)
+            file.set_len(start)
                 .or_raise(|| StorageError::backend_specific("failed to truncate item event file"))?;
 
-            self.item_log_file.file.write(line.as_bytes())
+            file.write(line.as_bytes())
                 .or_raise(|| StorageError::backend_write(format!("failed to write item event '{id}' to file")))?;
 
-            self.item_log_file.file.write(remainder.as_bytes())
+            file.write(remainder.as_bytes())
                 .or_raise(|| StorageError::backend_write("failed to write remainder to item event file"))?;
 
-            self.item_log_file.event_positions.iter_mut()
+            event_positions.iter_mut()
                 .skip(index)
                 .for_each(|tuple| tuple.0 += line_size);
 
-            self.item_log_file.event_positions.insert(index, (end, id.clone()));
+            event_positions.insert(index, (end, id.clone()));
         }
 
         if self.in_transaction {
@@ -680,30 +693,33 @@ impl Store for FileStorage {
     }
 
     fn delete_item_event(&mut self, id: &Uuid) -> Result<ItemEvent, StorageError> {
-        let index = match self.item_log_file.event_positions.binary_search_by_key(id, |i| i.1) {
+        let file = &mut self.item_log_file.file;
+        let event_positions = &mut self.item_log_file.event_positions;
+
+        let index = match event_positions.binary_search_by_key(id, |i| i.1) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
                 format!("unable to find position of item event with id '{id}'")
             )),
         };
 
-        let start = self.item_log_file.event_positions.get(index-1)
+        let start = event_positions.get(index-1)
             .map(|t| t.0)
             .unwrap_or(0);
-        let end = self.item_log_file.event_positions.remove(index).0;
+        let end = event_positions.remove(index).0;
         let line_size = end-start;
 
-        self.item_log_file.file.seek(SeekFrom::Start(start))
+        file.seek(SeekFrom::Start(start))
             .or_raise(|| StorageError::backend_specific("failed to seek position in item event file"))?;
 
         let mut buffer = String::new();
-        self.item_log_file.file.read_to_string(&mut buffer)
+        file.read_to_string(&mut buffer)
             .or_raise(|| StorageError::backend_read("failed to read item event from file"))?;
 
         let item_slice = buffer.get(0 .. (line_size-1) as usize)
             .ok_or_raise(|| StorageError::backend_specific("failed to calculate indices for string split properly"))?;
 
-        let remainder_slice = (index < self.item_log_file.event_positions.len()).then(||
+        let remainder_slice = (index < event_positions.len()).then(||
                 buffer.get(line_size as usize .. buffer.len()-1)
             )
             .ok_or_raise(|| StorageError::backend_specific("failed to calculate indices for string split properly"))?;
@@ -712,21 +728,21 @@ impl Store for FileStorage {
             .or_raise(|| StorageError::backend_read("failed to read item event from file"))?
             .1;
 
+        file.set_len(end)
+            .or_raise(|| StorageError::backend_specific("failed to truncate item event file"))?;
+
+        if let Some(remainder) = remainder_slice {
+            file.write(remainder.as_bytes())
+                .or_raise(|| StorageError::backend_write("failed to write remainder to item event file"))?;
+            event_positions.iter_mut()
+                .skip(index)
+                .for_each(|tuple| tuple.0 -= line_size);
+        };
+
         if self.in_transaction {
             let cloned_item_event = item_event.clone();
             self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_item_event(&cloned_item_event)));
         }
-
-        self.item_log_file.file.set_len(end)
-            .or_raise(|| StorageError::backend_specific("failed to truncate item event file"))?;
-
-        if let Some(remainder) = remainder_slice {
-            self.item_log_file.file.write(remainder.as_bytes())
-                .or_raise(|| StorageError::backend_write("failed to write remainder to item event file"))?;
-            self.item_log_file.event_positions.iter_mut()
-                .skip(index)
-                .for_each(|tuple| tuple.0 -= line_size);
-        };
 
         Ok(item_event)
     }
