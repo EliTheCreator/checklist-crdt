@@ -19,7 +19,7 @@ pub enum HeadEvent {
     DescriptionUpdate {
         id: Uuid,
         itc_event: EventTree,
-        description: String,
+        description: Option<String>,
     },
     CompletedUpdate {
         id: Uuid,

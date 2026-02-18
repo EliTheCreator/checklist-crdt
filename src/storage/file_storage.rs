@@ -208,10 +208,12 @@ impl FileStorage {
 
     fn serialize_head_description_update(&mut self, event: &HeadEvent) -> Option<String> {
         if let HeadEvent::DescriptionUpdate { id, itc_event, description } = event {
+            let description = description.clone().unwrap_or(String::new());
             Some(format!(
-                "DescriptionUpdate {} {} {}\n",
+                "DescriptionUpdate {} {} {}:{}\n",
                 id,
                 itc_event,
+                description.matches(" ").count()+1,
                 description,
             ))
         } else {
@@ -221,8 +223,8 @@ impl FileStorage {
 
     fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
-        let description = FileStorage::get_next_str(iter, "description")?
-            .to_string();
+        let description = Some(FileStorage::get_next_string(iter, "description")?)
+            .filter(|s| s.is_empty());
 
         Ok(HeadEvent::DescriptionUpdate { id, itc_event, description })
     }
