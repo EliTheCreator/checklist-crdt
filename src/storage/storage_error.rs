@@ -2,7 +2,7 @@ use core::error::Error;
 use core::fmt::{Display, Formatter, Result};
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     BackendOpen,
     BackendRead,
@@ -17,7 +17,7 @@ pub enum ErrorKind {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct StorageError {
     pub kind: ErrorKind,
     pub message: String,
