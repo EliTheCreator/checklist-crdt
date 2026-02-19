@@ -74,6 +74,8 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             self.abort_transaction(e, "crdt unable commit transaction")
         )?;
 
+        self.itc_stamp = stamp;
+
         Ok(())
     }
 
@@ -97,6 +99,8 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         let _ = self.storage.commit_transaction().map_err(|e|
             self.abort_transaction(e, "crdt unable commit transaction")
         )?;
+
+        self.itc_stamp = stamp;
 
         Ok(event)
     }
@@ -203,6 +207,8 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             self.abort_transaction(e, "crdt unable commit transaction")
         )?;
 
+        self.itc_stamp = stamp;
+
         Ok(())
     }
 
@@ -226,6 +232,8 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         let _ = self.storage.commit_transaction().map_err(|e|
             self.abort_transaction(e, "crdt unable commit transaction")
         )?;
+
+        self.itc_stamp = stamp;
 
         Ok(event)
     }
