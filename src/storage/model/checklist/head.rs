@@ -14,20 +14,24 @@ pub enum HeadEvent {
     NameUpdate {
         id: Uuid,
         itc_event: EventTree,
+        head_id: Uuid,
         name: String,
     },
     DescriptionUpdate {
         id: Uuid,
         itc_event: EventTree,
+        head_id: Uuid,
         description: Option<String>,
     },
     CompletedUpdate {
         id: Uuid,
         itc_event: EventTree,
+        head_id: Uuid,
         completed: bool,
     },
     Deletion {
         id: Uuid,
+        head_id: Uuid,
         itc_event: EventTree,
     },
 }

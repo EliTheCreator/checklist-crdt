@@ -15,21 +15,25 @@ pub enum ItemEvent {
     NameUpdate {
         id: Uuid,
         itc_event: EventTree,
+        item_id: Uuid,
         name: String,
     },
     PositionUpdate {
         id: Uuid,
         itc_event: EventTree,
+        item_id: Uuid,
         position: FractionalIndex,
     },
     CheckedUpdate {
         id: Uuid,
         itc_event: EventTree,
+        item_id: Uuid,
         checked: bool,
     },
     Deletion {
         id: Uuid,
         itc_event: EventTree,
+        item_id: Uuid,
     },
 }
 

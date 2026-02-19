@@ -116,19 +116,20 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             name: name,
             description: description,
         };
-        
+
         self.save_checklist_head_event(stamp, event)?;
         Ok(id)
     }
 
     pub fn update_checklist_head_name(
         &mut self,
-        id: &Uuid,
+        head_id: &Uuid,
         name: String,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
         let event = HeadEvent::NameUpdate {
-            id: id.clone(),
+            id: Uuid::now_v7(),
+            head_id: head_id.clone(),
             itc_event: stamp.event_tree(),
             name: name,
         };
@@ -138,12 +139,13 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn update_checklist_head_description(
         &mut self,
-        id: &Uuid,
+        head_id: &Uuid,
         description: Option<String>,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
         let event = HeadEvent::DescriptionUpdate {
-            id: id.clone(),
+            id: Uuid::now_v7(),
+            head_id: head_id.clone(),
             itc_event: stamp.event_tree(),
             description: description,
         };
@@ -153,12 +155,13 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn update_checklist_head_completed(
         &mut self,
-        id: &Uuid,
+        head_id: &Uuid,
         completed: bool,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
         let event = HeadEvent::CompletedUpdate {
-            id: id.clone(),
+            id: Uuid::now_v7(),
+            head_id: head_id.clone(),
             itc_event: stamp.event_tree(),
             completed: completed,
         };
@@ -168,12 +171,13 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn delete_checklist_head(
         &mut self,
-        id: &Uuid,
+        head_id: &Uuid,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
         let event = HeadEvent::Deletion {
-            id: id.clone(),
+            id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
+            head_id: head_id.clone(),
         };
 
         self.save_checklist_head_event(stamp, event)
@@ -241,20 +245,21 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             name: name,
             position: position,
         };
-        
+
         self.save_checklist_item_event(stamp, event)?;
         Ok(id)
     }
 
     pub fn update_checklist_item_name(
         &mut self,
-        id: &Uuid,
+        item_id: &Uuid,
         name: String,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
         let event = ItemEvent::NameUpdate {
-            id: id.clone(),
+            id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
+            item_id: item_id.clone(),
             name: name,
         };
 
@@ -263,13 +268,14 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn update_checklist_item_position(
         &mut self,
-        id: &Uuid,
+        item_id: &Uuid,
         position: FractionalIndex,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
         let event = ItemEvent::PositionUpdate {
-            id: id.clone(),
+            id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
+            item_id: item_id.clone(),
             position: position,
         };
 
@@ -278,13 +284,14 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn update_checklist_item_checked(
         &mut self,
-        id: &Uuid,
+        item_id: &Uuid,
         checked: bool,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
         let event = ItemEvent::CheckedUpdate {
-            id: id.clone(),
+            id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
+            item_id: item_id.clone(),
             checked: checked,
         };
 
@@ -293,12 +300,13 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn delete_checklist_item(
         &mut self,
-        id: &Uuid,
+        item_id: &Uuid,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
         let event: ItemEvent = ItemEvent::Deletion {
-            id: id.clone(),
+            id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
+            item_id: item_id.clone(),
         };
 
         self.save_checklist_item_event(stamp, event)

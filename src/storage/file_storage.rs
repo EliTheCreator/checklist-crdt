@@ -186,11 +186,12 @@ impl FileStorage {
     }
 
     fn serialize_head_name_update(&mut self, event: &HeadEvent) -> Option<String> {
-        if let HeadEvent::NameUpdate { id, itc_event, name } = event {
+        if let HeadEvent::NameUpdate { id, itc_event, head_id, name } = event {
             Some(format!(
-                "NameUpdate {} {} {}:{}\n",
+                "NameUpdate {} {} {} {}:{}\n",
                 id,
                 itc_event,
+                head_id,
                 name.matches(" ").count()+1,
                 name,
             ))
@@ -201,18 +202,20 @@ impl FileStorage {
 
     fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let head_id = FileStorage::parse_uuid(iter, "head id")?;
         let name = FileStorage::get_next_string(iter, "name")?;
 
-        Ok(HeadEvent::NameUpdate { id, itc_event, name })
+        Ok(HeadEvent::NameUpdate { id, itc_event, head_id, name })
     }
 
     fn serialize_head_description_update(&mut self, event: &HeadEvent) -> Option<String> {
-        if let HeadEvent::DescriptionUpdate { id, itc_event, description } = event {
+        if let HeadEvent::DescriptionUpdate { id, itc_event, head_id, description } = event {
             let description = description.clone().unwrap_or(String::new());
             Some(format!(
-                "DescriptionUpdate {} {} {}:{}\n",
+                "DescriptionUpdate {} {} {} {}:{}\n",
                 id,
                 itc_event,
+                head_id,
                 description.matches(" ").count()+1,
                 description,
             ))
@@ -223,18 +226,20 @@ impl FileStorage {
 
     fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let head_id = FileStorage::parse_uuid(iter, "head id")?;
         let description = Some(FileStorage::get_next_string(iter, "description")?)
             .filter(|s| s.is_empty());
 
-        Ok(HeadEvent::DescriptionUpdate { id, itc_event, description })
+        Ok(HeadEvent::DescriptionUpdate { id, itc_event, head_id, description })
     }
 
     fn serialize_head_completed_update(&mut self, event: &HeadEvent) -> Option<String> {
-        if let HeadEvent::CompletedUpdate { id, itc_event, completed } = event {
+        if let HeadEvent::CompletedUpdate { id, itc_event, head_id, completed } = event {
             Some(format!(
-                "CompletedUpdate {} {} {}\n",
+                "CompletedUpdate {} {} {} {}\n",
                 id,
                 itc_event,
+                head_id,
                 completed,
             ))
         } else {
@@ -244,17 +249,19 @@ impl FileStorage {
 
     fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let head_id = FileStorage::parse_uuid(iter, "head id")?;
         let completed = FileStorage::parse_bool(iter, "completed")?;
 
-        Ok(HeadEvent::CompletedUpdate { id, itc_event, completed })
+        Ok(HeadEvent::CompletedUpdate { id, itc_event, head_id, completed })
     }
 
     fn serialize_head_deletion(&mut self, event: &HeadEvent) -> Option<String> {
-        if let HeadEvent::Deletion { id, itc_event } = event {
+        if let HeadEvent::Deletion { id, head_id, itc_event } = event {
             Some(format!(
-                "Deletion {} {}\n",
+                "Deletion {} {} {}\n",
                 id,
                 itc_event,
+                head_id,
             ))
         } else {
             None
@@ -263,8 +270,9 @@ impl FileStorage {
 
     fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<HeadEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let head_id = FileStorage::parse_uuid(iter, "head id")?;
 
-        Ok(HeadEvent::Deletion { id, itc_event })
+        Ok(HeadEvent::Deletion { id, itc_event, head_id })
     }
 
     fn load_head_event(line: &str) -> Result<(u64, HeadEvent), StorageError> {
@@ -326,11 +334,12 @@ impl FileStorage {
     }
 
     fn serialize_item_name_update(&mut self, event: &ItemEvent) -> Option<String> {
-        if let ItemEvent::NameUpdate { id, itc_event, name } = event {
+        if let ItemEvent::NameUpdate { id, itc_event, item_id, name } = event {
             Some(format!(
-                "NameUpdate {} {} {}:{}\n",
+                "NameUpdate {} {} {} {}:{}\n",
                 id,
                 itc_event,
+                item_id,
                 name.matches(" ").count()+1,
                 name,
             ))
@@ -341,18 +350,20 @@ impl FileStorage {
 
     fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let item_id = FileStorage::parse_uuid(iter, "item id")?;
 
         let name = FileStorage::get_next_string(iter, "name")?;
 
-        Ok(ItemEvent::NameUpdate { id, itc_event, name })
+        Ok(ItemEvent::NameUpdate { id, itc_event, item_id, name })
     }
 
     fn serialize_item_position_update(&mut self, event: &ItemEvent) -> Option<String> {
-        if let ItemEvent::PositionUpdate { id, itc_event, position } = event {
+        if let ItemEvent::PositionUpdate { id, itc_event, item_id, position } = event {
             Some(format!(
-                "PositionUpdate {} {} {}\n",
+                "PositionUpdate {} {} {} {}\n",
                 id,
                 itc_event,
+                item_id,
                 position,
             ))
         } else {
@@ -362,19 +373,21 @@ impl FileStorage {
 
     fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let item_id = FileStorage::parse_uuid(iter, "item id")?;
 
         let position = FileStorage::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
-        Ok(ItemEvent::PositionUpdate { id, itc_event, position })
+        Ok(ItemEvent::PositionUpdate { id, itc_event, item_id, position })
     }
 
     fn serialize_item_checked_update(&mut self, event: &ItemEvent) -> Option<String> {
-        if let ItemEvent::CheckedUpdate { id, itc_event, checked } = event {
+        if let ItemEvent::CheckedUpdate { id, itc_event, item_id, checked } = event {
             Some(format!(
-                "CheckedUpdate {} {} {}\n",
+                "CheckedUpdate {} {} {} {}\n",
                 id,
                 itc_event,
+                item_id,
                 checked,
             ))
         } else {
@@ -384,17 +397,19 @@ impl FileStorage {
 
     fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let item_id = FileStorage::parse_uuid(iter, "item id")?;
         let checked = FileStorage::parse_bool(iter, "checked")?;
 
-        Ok(ItemEvent::CheckedUpdate { id, itc_event, checked })
+        Ok(ItemEvent::CheckedUpdate { id, itc_event, item_id, checked })
     }
 
     fn serialize_item_deletion(&mut self, event: &ItemEvent) -> Option<String> {
-        if let ItemEvent::Deletion { id, itc_event } = event {
+        if let ItemEvent::Deletion { id, itc_event, item_id } = event {
             Some(format!(
-                "Deletion {} {}\n",
+                "Deletion {} {} {}\n",
                 id,
                 itc_event,
+                item_id,
             ))
         } else {
             None
@@ -403,8 +418,9 @@ impl FileStorage {
 
     fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<ItemEvent, StorageError> {
         let (id, itc_event) = FileStorage::parse_event_meta(iter)?;
+        let item_id = FileStorage::parse_uuid(iter, "item id")?;
 
-        Ok(ItemEvent::Deletion { id, itc_event })
+        Ok(ItemEvent::Deletion { id, itc_event, item_id })
     }
 
     fn load_item_event(line: &str) -> Result<(u64, ItemEvent), StorageError> {
