@@ -47,3 +47,15 @@ impl HeadEvent {
         }
     }
 }
+
+impl HeadEvent {
+    pub fn itc_event(&self) -> &EventTree {
+        match self {
+            HeadEvent::Creation { itc_event, .. } => itc_event,
+            HeadEvent::NameUpdate { itc_event, .. } => itc_event,
+            HeadEvent::DescriptionUpdate { itc_event, .. } => itc_event,
+            HeadEvent::CompletedUpdate { itc_event, .. } => itc_event,
+            HeadEvent::Deletion { itc_event, .. } => itc_event,
+        }
+    }
+}

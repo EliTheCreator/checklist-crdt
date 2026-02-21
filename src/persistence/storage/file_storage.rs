@@ -7,9 +7,8 @@ use itc::{EventTree, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
-use super::model::checklist::head::HeadEvent;
-use super::model::checklist::item::ItemEvent;
-use super::storage_error::StorageError;
+use crate::persistence::model::checklist::{HeadEvent, ItemEvent};
+use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
 

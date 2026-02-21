@@ -48,3 +48,15 @@ impl ItemEvent {
         }
     }
 }
+
+impl ItemEvent {
+    pub fn itc_event(&self) -> &EventTree {
+        match self {
+            ItemEvent::Creation { itc_event, .. } => itc_event,
+            ItemEvent::NameUpdate { itc_event, .. } => itc_event,
+            ItemEvent::PositionUpdate { itc_event, .. } => itc_event,
+            ItemEvent::CheckedUpdate { itc_event, .. } => itc_event,
+            ItemEvent::Deletion { itc_event, .. } => itc_event,
+        }
+    }
+}

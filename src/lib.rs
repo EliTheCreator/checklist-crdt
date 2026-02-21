@@ -1,3 +1,3 @@
 pub mod crdt;
-pub mod storage;
+pub mod persistence;
 pub mod transport;
