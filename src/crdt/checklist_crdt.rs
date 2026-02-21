@@ -1,13 +1,12 @@
 use exn::{bail, Exn, Result, ResultExt};
-use itc::{IntervalTreeClock, Stamp};
+use itc::{EventTree, IdTree, IntervalTreeClock, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
 use crate::crdt::crdt_error::CrdtError;
-use crate::storage::model::checklist::head::HeadEvent;
-use crate::storage::model::checklist::item::ItemEvent;
-use crate::storage::storage_error::{StorageError, ErrorKind};
-use crate::storage::store::Store;
+use crate::persistence::model::checklist::{HeadEvent, ItemEvent};
+use crate::persistence::{StorageError, ErrorKind};
+use crate::persistence::storage::Store;
 use crate::transport::transport::Transport;
 
 
@@ -328,7 +327,7 @@ mod test {
 
     #[test]
     fn init_test() {
-        use crate::storage::file_storage::FileStorage;
+        use crate::persistence::storage::FileStorage;
 
         struct DummyTransport {}
         impl Transport for DummyTransport {}
