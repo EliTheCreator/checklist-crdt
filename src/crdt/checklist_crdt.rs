@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::mem::discriminant;
 use std::rc::Rc;
 
 use exn::{bail, Exn, Result, ResultExt};
@@ -237,6 +238,11 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         self.transactionalize(stamp, operation)
     }
 
+    pub fn get_all_checklist_heads(&self) -> Result<Vec<HeadEvent>, CrdtError> {
+        self.storage.load_all_head_events()
+            .or_raise(|| CrdtError::recovered("crdt unable to load all head events"))
+    }
+
     fn save_checklist_item_event(&mut self, event: ItemEvent) -> Result<(), CrdtError> {
         self.storage.save_item_event(&event).map_err(|e|
             self.abort_transaction(e, "crdt unable to store item event")
@@ -350,9 +356,13 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         self.transactionalize(stamp, operation)
     }
 
+    pub fn get_all_checklist_items(&self) -> Result<Vec<ItemEvent>, CrdtError> {
+        self.storage.load_all_item_events()
+            .or_raise(|| CrdtError::recovered("crdt unable to load all item events"))
+    }
+
     pub fn get_event_delta(&self, peer_event: EventTree) -> Result<EventDelta, CrdtError> {
-        let mut head_events = self.storage.load_all_head_events()
-            .or_raise(|| CrdtError::recovered(""))?;
+        let mut head_events = self.get_all_checklist_heads()?;
         head_events.retain(|head| {
             match peer_event.partial_cmp(head.itc_event()) {
                 Some(ordering) => ordering == Ordering::Less,
@@ -360,8 +370,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             }
         });
 
-        let mut item_events = self.storage.load_all_item_events()
-            .or_raise(|| CrdtError::recovered(""))?;
+        let mut item_events = self.get_all_checklist_items()?;
         item_events.retain(|item| {
             match peer_event.partial_cmp(item.itc_event()) {
                 Some(ordering) => ordering == Ordering::Less,
@@ -398,41 +407,29 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn fork(&mut self) -> Result<Peer, CrdtError> {
         let (stamp, peer_stamp) = self.itc_stamp.fork();
-        let head_events = self.storage.load_all_head_events()
-            .or_raise(|| CrdtError::recovered(""))?;
-        let item_events = self.storage.load_all_item_events()
-            .or_raise(|| CrdtError::recovered(""))?;
+        let head_events = self.get_all_checklist_heads()?;
+        let item_events = self.get_all_checklist_items()?;
 
         let _ = self.transactionalize(stamp, Box::new(move |_| Ok(())))?;
 
         Ok(Peer::new(peer_stamp, head_events, item_events))
     }
 
-    pub fn trim_events(&mut self) -> Result<(), CrdtError> {
-        let head_events = self.storage.load_all_head_events()
-            .or_raise(|| CrdtError::recovered(""))?;
-        let item_events = self.storage.load_all_item_events()
-            .or_raise(|| CrdtError::recovered(""))?;
-
-        let grouped_head_events = head_events.into_iter()
-            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<HeadEvent>>, e| {
+    fn find_trimable_head_events(&self) -> Result<(Vec<Uuid>, HashSet<Uuid>), CrdtError> {
+        let events = self.get_all_checklist_heads()?;
+        let grouped_events = events.iter()
+            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&HeadEvent>>, e| {
                 m.entry(e.head_id().clone()).or_default().push(e);
                 m
             });
 
-        let grouped_item_events = item_events.into_iter()
-            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<ItemEvent>>, e| {
-                m.entry(e.item_id().clone()).or_default().push(e);
-                m
-            });
-
-        let mut head_events_to_delete = Vec::new();
-        let mut head_event_headstones = Vec::new();
+        let mut trimable_events = Vec::new();
+        let mut deleted_events = Vec::new();
         let deletion_discriminant = discriminant(&HeadEvent::Deletion { id: Uuid::default(), head_id: Uuid::default(), itc_event: EventTree::zero() });
-        for group in grouped_head_events.into_values() {
+        for group in grouped_events.into_values() {
             let discriminant_bins = group.into_iter()
-                .fold(HashMap::new(), |mut m: HashMap<_,Vec<HeadEvent>>, e| {
-                    m.entry(discriminant(&e)).or_default().push(e);
+                .fold(HashMap::new(), |mut m: HashMap<_,Vec<&HeadEvent>>, e| {
+                    m.entry(discriminant(e)).or_default().push(e);
                     m
                 });
 
@@ -440,35 +437,50 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             let mut headstone = None;
             for mut bin in discriminant_bins.into_values() {
                 if let Some(event) = bin.pop() {
-                    if discriminant(&event) == deletion_discriminant {
+                    if discriminant(event) == deletion_discriminant {
                         headstone = Some(event)
                     } else {
                         keep.push(event);
                     }
-                    head_events_to_delete.extend( bin);
+                    trimable_events.extend( bin);
                 }
             }
             if let Some(headstone) = headstone {
-                head_events_to_delete.extend(keep);
-                head_event_headstones.push(headstone);
+                trimable_events.extend(keep);
+                deleted_events.push(headstone);
             }
         }
 
-        let headstones = head_event_headstones.into_iter().map(|event| {
+        let trimable_events_ids = trimable_events.into_iter()
+            .map(|event| event.id().clone())
+            .collect::<Vec<Uuid>>();
+
+        let deleted_events_ids = deleted_events.into_iter().map(|event| {
                 match event {
-                    HeadEvent::Deletion { head_id, .. } => head_id,
+                    HeadEvent::Deletion { head_id, .. } => head_id.clone(),
                     _ => unreachable!()
                 }
             })
             .collect::<HashSet<Uuid>>();
 
+        Ok((trimable_events_ids, deleted_events_ids))
+    }
 
-        let mut item_events_to_delete = Vec::new();
-        let mut item_event_headstones = Vec::new();
-        for group in grouped_item_events.into_values() {
+    fn find_trimable_item_events(&self, deleted_head_events_ids: HashSet<Uuid>) -> Result<Vec<Uuid>, CrdtError> {
+        let events = self.get_all_checklist_items()?;
+        let grouped_events = events.iter()
+            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&ItemEvent>>, e| {
+                m.entry(e.item_id().clone()).or_default().push(e);
+                m
+            });
+
+
+        let mut trimable_events = Vec::new();
+        let mut deleted_events = Vec::new();
+        for group in grouped_events.into_values() {
             let discriminant_bins = group.into_iter()
-                .fold(HashMap::new(), |mut m: HashMap<_,Vec<ItemEvent>>, e| {
-                    m.entry(discriminant(&e)).or_default().push(e);
+                .fold(HashMap::new(), |mut m: HashMap<_,Vec<&ItemEvent>>, e| {
+                    m.entry(discriminant(e)).or_default().push(e);
                     m
                 });
 
@@ -482,7 +494,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
                 };
                 match event {
                     ItemEvent::Creation { head_id, .. } => {
-                        if headstones.contains(&head_id) {
+                        if deleted_head_events_ids.contains(&head_id) {
                             delete_all = true;
                         }
                         keep.push(event);
@@ -490,48 +502,62 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
                     ItemEvent::Deletion { .. } => headstone = Some(event),
                     _ => keep.push(event),
                 }
-                item_events_to_delete.extend( bin);
+                trimable_events.extend( bin);
             }
 
             if delete_all {
-                item_events_to_delete.extend(keep);
+                trimable_events.extend(keep);
                 if let Some(headstone) = headstone {
-                    item_events_to_delete.push(headstone);
+                    trimable_events.push(headstone);
                 }
             } else if let Some(headstone) = headstone {
-                item_events_to_delete.extend(keep);
-                item_event_headstones.push(headstone);
+                trimable_events.extend(keep);
+                deleted_events.push(headstone);
             }
         }
 
+        let trimable_events_ids = trimable_events.into_iter()
+            .map(|event| event.id().clone())
+            .collect::<Vec<Uuid>>();
+
+        Ok(trimable_events_ids)
+    }
+
+    pub fn trim_events(&mut self) -> Result<(Vec<HeadEvent>, Vec<ItemEvent>), CrdtError> {
+        let (trimable_head_events_ids, deleted_head_events_ids) = self.find_trimable_head_events()
+            .or_raise(|| CrdtError::recoverable(""))?;
+        let trimable_item_events_ids = self.find_trimable_item_events(deleted_head_events_ids)
+            .or_raise(|| CrdtError::recoverable(""))?;
+
+        let deleted_head_events: Rc<RefCell<Vec<HeadEvent>>> = Rc::new(RefCell::new(Vec::new()));
+        let dhe_closure_cpy = Rc::clone(&deleted_head_events);
+
+        let deleted_item_events: Rc<RefCell<Vec<ItemEvent>>> = Rc::new(RefCell::new(Vec::new()));
+        let die_closure_cpy = Rc::clone(&deleted_item_events);
+
         let stamp = self.itc_stamp.event();
+        let operation: StorageOperation<S, T> = Box::new(move |crdt| {
+            for head_event_id in trimable_head_events_ids {
+                let head_event = crdt.storage.delete_head_event(&head_event_id).map_err(|e|
+                    crdt.abort_transaction(e, "crdt unable to store head event")
+                )?;
+                (*dhe_closure_cpy.borrow_mut()).push(head_event);
+            }
 
-        self.storage.start_transaction()
-            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+            for item_event_id in trimable_item_events_ids {
+                let item_event = crdt.storage.delete_item_event(&item_event_id).map_err(|e|
+                    crdt.abort_transaction(e, "crdt unable to store item event")
+                )?;
+                (*die_closure_cpy.borrow_mut()).push(item_event);
+            }
 
-        for item_event in item_events_to_delete {
-            let event = self.storage.delete_item_event(item_event.id()).map_err(|e|
-                self.abort_transaction(e, "crdt unable to store item event")
-            )?;
-        }
+            Ok(())
+        });
+        self.transactionalize(stamp, operation)?;
 
-        for head_event in head_events_to_delete {
-            let event = self.storage.delete_head_event(head_event.id()).map_err(|e|
-                self.abort_transaction(e, "crdt unable to store head event")
-            )?;
-        }
-
-        let _ = self.storage.save_stamp(&stamp).map_err(|e|
-            self.abort_transaction(e, "crdt unable to save stamp")
-        )?;
-
-        let _ = self.storage.commit_transaction().map_err(|e|
-            self.abort_transaction(e, "crdt unable commit transaction")
-        )?;
-
-        self.itc_stamp = stamp;
-
-        Ok(())
+        let deleted_head_events = deleted_head_events.replace(Vec::new());
+        let deleted_item_events = deleted_item_events.replace(Vec::new());
+        Ok((deleted_head_events, deleted_item_events))
     }
 }
 
