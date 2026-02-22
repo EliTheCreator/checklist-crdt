@@ -28,6 +28,20 @@ impl InMemoryStorage {
             rollback_stack: Vec::new(),
         }
     }
+
+    pub fn init(
+        stamp: Stamp,
+        head_events: Vec<HeadEvent>,
+        item_events: Vec<ItemEvent>,
+    ) -> Self {
+        Self {
+            stamp: stamp,
+            head_events: head_events,
+            item_events: item_events,
+            in_transaction: false,
+            rollback_stack: Vec::new(),
+        }
+    }
 }
 
 impl Store for InMemoryStorage {

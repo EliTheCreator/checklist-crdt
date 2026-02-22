@@ -526,6 +526,8 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
 #[cfg(test)]
 mod test {
+    use crate::persistence::storage::InMemoryStorage;
+
     use super::*;
 
     #[test]
@@ -563,5 +565,49 @@ mod test {
             "test 3 asdf item".into(),
             FractionalIndex::new_before(&index),
         ).unwrap();
+    }
+
+    #[test]
+    fn merge_test() {
+
+        struct DummyTransport {}
+        impl Transport for DummyTransport {}
+
+        let mut crdt_1 = ChecklistCrdt::new(
+            InMemoryStorage::new(),
+            DummyTransport {},
+        ).unwrap();
+
+        let head_id = crdt_1.add_checklist_head(None, "A".into(), Some("ab c de".into())).unwrap();
+        let position = FractionalIndex::default();
+        let first = crdt_1.add_checklist_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
+        let second = crdt_1.add_checklist_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
+
+        let peer_data = crdt_1.fork().unwrap();
+        let mut crdt_2 = ChecklistCrdt::new(
+            InMemoryStorage::init(peer_data.stamp, peer_data.head_events, peer_data.item_events),
+            DummyTransport {},
+        ).unwrap();
+
+        crdt_1.update_checklist_head_name(&head_id, "B".into()).unwrap();
+        crdt_2.update_checklist_head_name(&head_id, "C".into()).unwrap();
+
+        crdt_1.update_checklist_item_checked(&first, true).unwrap();
+        crdt_2.update_checklist_item_checked(&second, true).unwrap();
+        crdt_2.update_checklist_item_name(&second, "3.2".into()).unwrap();
+        crdt_1.update_checklist_item_name(&second, "3.1".into()).unwrap();
+
+        let delta_1_2 = crdt_1.get_event_delta(crdt_2.itc_stamp.event_tree()).unwrap();
+        let delta_2_1 = crdt_2.get_event_delta(crdt_1.itc_stamp.event_tree()).unwrap();
+
+        crdt_1.apply_event_delta(delta_2_1).unwrap();
+        crdt_2.apply_event_delta(delta_1_2).unwrap();
+
+        let mut peer_1 = crdt_1.fork().unwrap();
+        peer_1.stamp = Stamp::seed();
+        let mut peer_2 = crdt_2.fork().unwrap();
+        peer_2.stamp = Stamp::seed();
+
+        assert_eq!(peer_1, peer_2);
     }
 }
