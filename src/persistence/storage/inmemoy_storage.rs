@@ -81,16 +81,9 @@ impl Store for InMemoryStorage {
     }
 
     fn save_head_event(&mut self, event: &HeadEvent) -> Result<(), StorageError> {
-        let index = match self.head_events.binary_search_by_key(event.id(), |h| *h.id()) {
-            Ok(index) => {
-                self.head_events.insert(index, event.clone());
-                index
-            },
-            Err(index) => {
-                self.head_events.push(event.clone());
-                index
-            },
-        };
+        let index = self.head_events.binary_search_by_key(event.id(), |h| *h.id())
+            .unwrap_or_else(|i| i);
+        self.head_events.insert(index, event.clone());
 
         if self.in_transaction {
             self.rollback_stack.push(Box::new(move |store: &mut InMemoryStorage| {
@@ -119,16 +112,9 @@ impl Store for InMemoryStorage {
     }
 
     fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError> {
-        let index = match self.item_events.binary_search_by_key(event.id(), |h| *h.id()) {
-            Ok(index) => {
-                self.item_events.insert(index, event.clone());
-                index
-            },
-            Err(index) => {
-                self.item_events.push(event.clone());
-                index
-            },
-        };
+        let index = self.item_events.binary_search_by_key(event.id(), |h| *h.id())
+            .unwrap_or_else(|i| i);
+        self.item_events.insert(index, event.clone());
 
         if self.in_transaction {
             self.rollback_stack.push(Box::new(move |store: &mut InMemoryStorage| {
