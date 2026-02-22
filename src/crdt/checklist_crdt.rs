@@ -136,24 +136,18 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     ) -> Result<HeadEvent, CrdtError> {
         let stamp = self.itc_stamp.event();
 
-        self.storage.start_transaction()
-            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
-
-        let event = self.storage.delete_head_event(id).map_err(|e|
-            self.abort_transaction(e, "crdt unable to store head event")
-        )?;
-
-        let _ = self.storage.save_stamp(&stamp).map_err(|e|
-            self.abort_transaction(e, "crdt unable to save stamp")
-        )?;
-
-        let _ = self.storage.commit_transaction().map_err(|e|
-            self.abort_transaction(e, "crdt unable commit transaction")
-        )?;
-
-        self.itc_stamp = stamp;
-
-        Ok(event)
+        let event: Rc<RefCell<Option<HeadEvent>>> = Rc::new(RefCell::new(None));
+        let closure_event = Rc::clone(&event);
+        let id = id.clone();
+        let operation: StorageOperation<S, T> = Box::new(move |crdt| {
+            let event = crdt.storage.delete_head_event(&id).map_err(|e|
+                crdt.abort_transaction(e, "crdt unable to erase head event")
+            )?;
+            *closure_event.borrow_mut() = Some(event);
+            Ok(())
+        });
+        let _ = self.transactionalize(stamp, operation)?;
+        Ok(event.replace(None).unwrap())
     }
 
     pub fn add_checklist_head(
@@ -255,24 +249,18 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     ) -> Result<ItemEvent, CrdtError> {
         let stamp = self.itc_stamp.event();
 
-        self.storage.start_transaction()
-            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
-
-        let event = self.storage.delete_item_event(id).map_err(|e|
-            self.abort_transaction(e, "crdt unable to store item event")
-        )?;
-
-        let _ = self.storage.save_stamp(&stamp).map_err(|e|
-            self.abort_transaction(e, "crdt unable to save stamp")
-        )?;
-
-        let _ = self.storage.commit_transaction().map_err(|e|
-            self.abort_transaction(e, "crdt unable commit transaction")
-        )?;
-
-        self.itc_stamp = stamp;
-
-        Ok(event)
+        let event: Rc<RefCell<Option<ItemEvent>>> = Rc::new(RefCell::new(None));
+        let closure_event = Rc::clone(&event);
+        let id = id.clone();
+        let operation: StorageOperation<S, T> = Box::new(move |crdt| {
+            let event = crdt.storage.delete_item_event(&id).map_err(|e|
+                crdt.abort_transaction(e, "crdt unable to erase item event")
+            )?;
+            *closure_event.borrow_mut() = Some(event);
+            Ok(())
+        });
+        let _ = self.transactionalize(stamp, operation)?;
+        Ok(event.replace(None).unwrap())
     }
 
     pub fn add_checklist_item(
