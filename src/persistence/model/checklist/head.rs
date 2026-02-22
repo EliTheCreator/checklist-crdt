@@ -2,7 +2,7 @@ use itc::EventTree;
 use uuid::Uuid;
 
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HeadEvent {
     Creation {
         id: Uuid,
@@ -31,8 +31,8 @@ pub enum HeadEvent {
     },
     Deletion {
         id: Uuid,
-        head_id: Uuid,
         itc_event: EventTree,
+        head_id: Uuid,
     },
 }
 
@@ -46,9 +46,7 @@ impl HeadEvent {
             HeadEvent::Deletion { id, .. } => id,
         }
     }
-}
 
-impl HeadEvent {
     pub fn itc_event(&self) -> &EventTree {
         match self {
             HeadEvent::Creation { itc_event, .. } => itc_event,
@@ -56,6 +54,16 @@ impl HeadEvent {
             HeadEvent::DescriptionUpdate { itc_event, .. } => itc_event,
             HeadEvent::CompletedUpdate { itc_event, .. } => itc_event,
             HeadEvent::Deletion { itc_event, .. } => itc_event,
+        }
+    }
+
+    pub fn head_id(&self) -> &Uuid {
+        match self {
+            HeadEvent::Creation { id, .. } => id,
+            HeadEvent::NameUpdate { head_id, .. } => head_id,
+            HeadEvent::DescriptionUpdate { head_id, .. } => head_id,
+            HeadEvent::CompletedUpdate { head_id, .. } => head_id,
+            HeadEvent::Deletion { head_id, .. } => head_id,
         }
     }
 }

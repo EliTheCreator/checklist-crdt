@@ -3,7 +3,7 @@ use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ItemEvent {
     Creation {
         id: Uuid,
@@ -47,9 +47,7 @@ impl ItemEvent {
             ItemEvent::Deletion { id, .. } => id,
         }
     }
-}
 
-impl ItemEvent {
     pub fn itc_event(&self) -> &EventTree {
         match self {
             ItemEvent::Creation { itc_event, .. } => itc_event,
@@ -57,6 +55,16 @@ impl ItemEvent {
             ItemEvent::PositionUpdate { itc_event, .. } => itc_event,
             ItemEvent::CheckedUpdate { itc_event, .. } => itc_event,
             ItemEvent::Deletion { itc_event, .. } => itc_event,
+        }
+    }
+
+    pub fn item_id(&self) -> &Uuid {
+        match self {
+            ItemEvent::Creation { id, .. } => id,
+            ItemEvent::NameUpdate { item_id, .. } => item_id,
+            ItemEvent::PositionUpdate { item_id, .. } => item_id,
+            ItemEvent::CheckedUpdate { item_id, .. } => item_id,
+            ItemEvent::Deletion { item_id, .. } => item_id,
         }
     }
 }
