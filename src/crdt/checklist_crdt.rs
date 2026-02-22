@@ -1,8 +1,6 @@
-use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
-use std::rc::Rc;
 
 use exn::{bail, Exn, Result, ResultExt};
 use itc::{EventTree, IdTree, IntervalTreeClock, Stamp};
@@ -16,7 +14,28 @@ use crate::persistence::storage::Store;
 use crate::transport::transport::Transport;
 
 
-type StorageOperation<S, T> = Box<dyn FnOnce(&mut ChecklistCrdt<S, T>) -> Result<(), CrdtError>>;
+#[macro_export]
+macro_rules! transaction {
+    ($this:expr, $stamp:expr, $body:block) => {{
+        $this.storage
+            .start_transaction()
+            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+
+        let result = (|| -> Result<_, _> { $body })()?;
+
+        let _ = $this.storage.save_stamp(&$stamp).map_err(|e| {
+            $this.abort_transaction(e, "crdt unable to save stamp")
+        })?;
+
+        let _ = $this.storage.commit_transaction().map_err(|e| {
+            $this.abort_transaction(e, "crdt unable commit transaction")
+        })?;
+
+        $this.itc_stamp = $stamp;
+
+        Ok(result)
+    }};
+}
 
 
 pub struct EventDelta {
@@ -63,9 +82,6 @@ pub struct ChecklistCrdt<S: Store, T: Transport> {
 }
 
 impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
-    // TODO: use this if/once inherent associated types are stabilised
-    // type StorageOperation = Box<dyn FnOnce(&mut ChecklistCrdt<S, T>) -> Result<(), CrdtError>>;
-
     pub fn new(mut storage: S, transport: T) -> Result<Self, CrdtError> {
         let stamp = match storage.load_stamp() {
             Ok(s) => s,
@@ -75,7 +91,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
                     .or_raise(|| CrdtError::fatal("failed to save new stamp"))?;
                 stamp
             },
-            Err(_) => bail!(CrdtError::fatal("")),
+            Err(_) => bail!(CrdtError::fatal("failed to load stamp")),
         };
 
         Ok(ChecklistCrdt {
@@ -102,29 +118,6 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         }
     }
 
-    fn transactionalize(
-        &mut self,
-        stamp: Stamp,
-        operation: StorageOperation<S, T>,
-    ) -> Result<(), CrdtError> {
-        self.storage.start_transaction()
-            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
-
-        let _ = operation(self)?;
-
-        let _ = self.storage.save_stamp(&stamp).map_err(|e|
-            self.abort_transaction(e, "crdt unable to save stamp")
-        )?;
-
-        let _ = self.storage.commit_transaction().map_err(|e|
-            self.abort_transaction(e, "crdt unable commit transaction")
-        )?;
-
-        self.itc_stamp = stamp;
-
-        Ok(())
-    }
-
     fn save_checklist_head_event(&mut self, event: HeadEvent) -> Result<(), CrdtError> {
         self.storage.save_head_event(&event).map_err(|e|
             self.abort_transaction(e, "crdt unable to store head event")
@@ -137,18 +130,11 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     ) -> Result<HeadEvent, CrdtError> {
         let stamp = self.itc_stamp.event();
 
-        let event: Rc<RefCell<Option<HeadEvent>>> = Rc::new(RefCell::new(None));
-        let closure_event = Rc::clone(&event);
-        let id = id.clone();
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| {
-            let event = crdt.storage.delete_head_event(&id).map_err(|e|
-                crdt.abort_transaction(e, "crdt unable to erase head event")
-            )?;
-            *closure_event.borrow_mut() = Some(event);
-            Ok(())
-        });
-        let _ = self.transactionalize(stamp, operation)?;
-        Ok(event.replace(None).unwrap())
+        transaction!(self, stamp, {
+            self.storage.delete_head_event(&id).map_err(|e|
+                self.abort_transaction(e, "crdt unable to erase head event")
+            )
+        })
     }
 
     pub fn add_checklist_head(
@@ -167,8 +153,9 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             description: description,
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_head_event(crdt, event));
-        self.transactionalize(stamp, operation)?;
+        let _: Result<(), CrdtError> = transaction!(self, stamp, {
+            self.save_checklist_head_event(event)
+        });
         Ok(id)
     }
 
@@ -185,8 +172,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             name: name,
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_head_event(crdt, event));
-        self.transactionalize(stamp, operation)
+        transaction!(self, stamp, { self.save_checklist_head_event(event) })
     }
 
     pub fn update_checklist_head_description(
@@ -202,8 +188,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             description: description,
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_head_event(crdt, event));
-        self.transactionalize(stamp, operation)
+        transaction!(self, stamp, { self.save_checklist_head_event(event) })
     }
 
     pub fn update_checklist_head_completed(
@@ -219,8 +204,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             completed: completed,
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_head_event(crdt, event));
-        self.transactionalize(stamp, operation)
+        transaction!(self, stamp, { self.save_checklist_head_event(event) })
     }
 
     pub fn delete_checklist_head(
@@ -234,8 +218,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             head_id: head_id.clone(),
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_head_event(crdt, event));
-        self.transactionalize(stamp, operation)
+        transaction!(self, stamp, { self.save_checklist_head_event(event) })
     }
 
     pub fn get_all_checklist_heads(&self) -> Result<Vec<HeadEvent>, CrdtError> {
@@ -255,18 +238,11 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     ) -> Result<ItemEvent, CrdtError> {
         let stamp = self.itc_stamp.event();
 
-        let event: Rc<RefCell<Option<ItemEvent>>> = Rc::new(RefCell::new(None));
-        let closure_event = Rc::clone(&event);
-        let id = id.clone();
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| {
-            let event = crdt.storage.delete_item_event(&id).map_err(|e|
-                crdt.abort_transaction(e, "crdt unable to erase item event")
-            )?;
-            *closure_event.borrow_mut() = Some(event);
-            Ok(())
-        });
-        let _ = self.transactionalize(stamp, operation)?;
-        Ok(event.replace(None).unwrap())
+        transaction!(self, stamp, {
+            self.storage.delete_item_event(id).map_err(|e|
+                self.abort_transaction(e, "crdt unable to erase item event")
+            )
+        })
     }
 
     pub fn add_checklist_item(
@@ -285,8 +261,9 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             position: position,
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_item_event(crdt, event));
-        let _ = self.transactionalize(stamp, operation)?;
+        let _: Result<(), CrdtError> = transaction!(self, stamp, {
+            self.save_checklist_item_event(event)
+        });
         Ok(id)
     }
 
@@ -303,8 +280,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             name: name,
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_item_event(crdt, event));
-        self.transactionalize(stamp, operation)
+        transaction!(self, stamp, { self.save_checklist_item_event(event) })
     }
 
     pub fn update_checklist_item_position(
@@ -320,8 +296,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             position: position,
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_item_event(crdt, event));
-        self.transactionalize(stamp, operation)
+        transaction!(self, stamp, { self.save_checklist_item_event(event) })
     }
 
     pub fn update_checklist_item_checked(
@@ -337,8 +312,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             checked: checked,
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_item_event(crdt, event));
-        self.transactionalize(stamp, operation)
+        transaction!(self, stamp, { self.save_checklist_item_event(event) })
     }
 
     pub fn delete_checklist_item(
@@ -352,8 +326,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             item_id: item_id.clone(),
         };
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| Self::save_checklist_item_event(crdt, event));
-        self.transactionalize(stamp, operation)
+        transaction!(self, stamp, { self.save_checklist_item_event(event) })
     }
 
     pub fn get_all_checklist_items(&self) -> Result<Vec<ItemEvent>, CrdtError> {
@@ -384,25 +357,24 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     }
 
     pub fn apply_event_delta(&mut self, delta: EventDelta) -> Result<(), CrdtError> {
-        if self.itc_stamp.event_tree() != delta.from_itc_event {
-            bail!(CrdtError::recovered(""));
-        }
+        // if self.itc_stamp.event_tree() != delta.from_itc_event {
+        //     bail!(CrdtError::recovered(""));
+        // }
 
         let peer_stamp = Stamp::new(IdTree::zero(), delta.to_itc_event.clone());
         let stamp = self.itc_stamp.join(&peer_stamp).event();
 
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| {
+        transaction!(self, stamp, {
             for event in delta.head_events {
-                crdt.save_checklist_head_event(event)?;
+                self.save_checklist_head_event(event)?;
             }
 
             for event in delta.item_events {
-                crdt.save_checklist_item_event(event)?;
+                self.save_checklist_item_event(event)?;
             }
 
             Ok(())
-        });
-        self.transactionalize(stamp, operation)
+        })
     }
 
     pub fn fork(&mut self) -> Result<Peer, CrdtError> {
@@ -410,8 +382,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         let head_events = self.get_all_checklist_heads()?;
         let item_events = self.get_all_checklist_items()?;
 
-        let _ = self.transactionalize(stamp, Box::new(move |_| Ok(())))?;
-
+        let _: Result<(), CrdtError> = transaction!(self, stamp, { Ok(()) });
         Ok(Peer::new(peer_stamp, head_events, item_events))
     }
 
@@ -474,7 +445,6 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
                 m
             });
 
-
         let mut trimable_events = Vec::new();
         let mut deleted_events = Vec::new();
         for group in grouped_events.into_values() {
@@ -525,39 +495,31 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn trim_events(&mut self) -> Result<(Vec<HeadEvent>, Vec<ItemEvent>), CrdtError> {
         let (trimable_head_events_ids, deleted_head_events_ids) = self.find_trimable_head_events()
-            .or_raise(|| CrdtError::recoverable(""))?;
+            .or_raise(|| CrdtError::recoverable("failed to find all trimable head events"))?;
         let trimable_item_events_ids = self.find_trimable_item_events(deleted_head_events_ids)
-            .or_raise(|| CrdtError::recoverable(""))?;
-
-        let deleted_head_events: Rc<RefCell<Vec<HeadEvent>>> = Rc::new(RefCell::new(Vec::new()));
-        let dhe_closure_cpy = Rc::clone(&deleted_head_events);
-
-        let deleted_item_events: Rc<RefCell<Vec<ItemEvent>>> = Rc::new(RefCell::new(Vec::new()));
-        let die_closure_cpy = Rc::clone(&deleted_item_events);
+            .or_raise(|| CrdtError::recoverable("failed to find all trimable item events"))?;
 
         let stamp = self.itc_stamp.event();
-        let operation: StorageOperation<S, T> = Box::new(move |crdt| {
+
+        transaction!(self, stamp, {
+            let mut deleted_head_events = Vec::new();
+            let mut deleted_item_events = Vec::new();
             for head_event_id in trimable_head_events_ids {
-                let head_event = crdt.storage.delete_head_event(&head_event_id).map_err(|e|
-                    crdt.abort_transaction(e, "crdt unable to store head event")
+                let head_event = self.storage.delete_head_event(&head_event_id).map_err(|e|
+                    self.abort_transaction(e, "crdt unable to store head event")
                 )?;
-                (*dhe_closure_cpy.borrow_mut()).push(head_event);
+                deleted_head_events.push(head_event);
             }
 
             for item_event_id in trimable_item_events_ids {
-                let item_event = crdt.storage.delete_item_event(&item_event_id).map_err(|e|
-                    crdt.abort_transaction(e, "crdt unable to store item event")
+                let item_event = self.storage.delete_item_event(&item_event_id).map_err(|e|
+                    self.abort_transaction(e, "crdt unable to store item event")
                 )?;
-                (*die_closure_cpy.borrow_mut()).push(item_event);
+                deleted_item_events.push(item_event);
             }
 
-            Ok(())
-        });
-        self.transactionalize(stamp, operation)?;
-
-        let deleted_head_events = deleted_head_events.replace(Vec::new());
-        let deleted_item_events = deleted_item_events.replace(Vec::new());
-        Ok((deleted_head_events, deleted_item_events))
+            Ok((deleted_head_events, deleted_item_events))
+        })
     }
 }
 
