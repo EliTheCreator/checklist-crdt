@@ -442,6 +442,169 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         Ok(Peer::new(peer_stamp, head_events, item_events))
     }
 
+    pub fn trim_events(&mut self) -> Result<(), CrdtError> {
+        let head_events = self.storage.load_all_head_events()
+            .or_raise(|| CrdtError::recovered(""))?;
+        let item_events = self.storage.load_all_item_events()
+            .or_raise(|| CrdtError::recovered(""))?;
+
+        let grouped_head_events = head_events.into_iter()
+            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<HeadEvent>>, e| {
+                m.entry(e.head_id().clone()).or_default().push(e);
+                m
+            });
+
+        let grouped_item_events = item_events.into_iter()
+            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<ItemEvent>>, e| {
+                m.entry(e.item_id().clone()).or_default().push(e);
+                m
+            });
+
+        // fn classify_events<T>(
+        //     grouped_events: HashMap<Uuid, Vec<T>>,
+        //     deletion_discriminant: Discriminant<T>,
+        // ) -> (Vec<T>, Vec<T>) {
+        //     let mut delete = Vec::new();
+        //     let mut headstones = Vec::new();
+        //     for group in grouped_events.into_values() {
+        //         let discriminant_bins = group.into_iter()
+        //             .fold(HashMap::new(), |mut m: HashMap<_,Vec<T>>, e| {
+        //                 m.entry(discriminant(&e)).or_default().push(e);
+        //                 m
+        //             });
+
+        //         let mut keep = Vec::new();
+        //         let mut headstone = None;
+        //         for mut bin in discriminant_bins.into_values() {
+        //             if let Some(event) = bin.pop() {
+        //                 if discriminant(&event) == deletion_discriminant {
+        //                     headstone = Some(event)
+        //                 } else {
+        //                     keep.push(event);
+        //                 }
+        //                 delete.extend( bin);
+        //             }
+        //         }
+        //         if let Some(headstone) = headstone {
+        //             delete.extend(keep);
+        //             headstones.push(headstone);
+        //         }
+        //     }
+        //     (delete, headstones)
+        // }
+
+        // let (mut delete, mut headstones) = classify_events(
+        //     grouped_head_events,
+        //     discriminant(&HeadEvent::Deletion { id: Uuid::default(), head_id: Uuid::default(), itc_event: EventTree::zero() })
+        // );
+
+        let mut head_events_to_delete = Vec::new();
+        let mut head_event_headstones = Vec::new();
+        let deletion_discriminant = discriminant(&HeadEvent::Deletion { id: Uuid::default(), head_id: Uuid::default(), itc_event: EventTree::zero() });
+        for group in grouped_head_events.into_values() {
+            let discriminant_bins = group.into_iter()
+                .fold(HashMap::new(), |mut m: HashMap<_,Vec<HeadEvent>>, e| {
+                    m.entry(discriminant(&e)).or_default().push(e);
+                    m
+                });
+
+            let mut keep = Vec::new();
+            let mut headstone = None;
+            for mut bin in discriminant_bins.into_values() {
+                if let Some(event) = bin.pop() {
+                    if discriminant(&event) == deletion_discriminant {
+                        headstone = Some(event)
+                    } else {
+                        keep.push(event);
+                    }
+                    head_events_to_delete.extend( bin);
+                }
+            }
+            if let Some(headstone) = headstone {
+                head_events_to_delete.extend(keep);
+                head_event_headstones.push(headstone);
+            }
+        }
+
+        let headstones = head_event_headstones.into_iter().map(|event| {
+                match event {
+                    HeadEvent::Deletion { head_id, .. } => head_id,
+                    _ => unreachable!()
+                }
+            })
+            .collect::<HashSet<Uuid>>();
+
+
+        let mut item_events_to_delete = Vec::new();
+        let mut item_event_headstones = Vec::new();
+        for group in grouped_item_events.into_values() {
+            let discriminant_bins = group.into_iter()
+                .fold(HashMap::new(), |mut m: HashMap<_,Vec<ItemEvent>>, e| {
+                    m.entry(discriminant(&e)).or_default().push(e);
+                    m
+                });
+
+            let mut keep = Vec::new();
+            let mut headstone = None;
+            let mut delete_all = false;
+            for mut bin in discriminant_bins.into_values() {
+                let event = match bin.pop() {
+                    Some(e) => e,
+                    None => continue,
+                };
+                match event {
+                    ItemEvent::Creation { head_id, .. } => {
+                        if headstones.contains(&head_id) {
+                            delete_all = true;
+                        }
+                        keep.push(event);
+                    },
+                    ItemEvent::Deletion { .. } => headstone = Some(event),
+                    _ => keep.push(event),
+                }
+                item_events_to_delete.extend( bin);
+            }
+
+            if delete_all {
+                item_events_to_delete.extend(keep);
+                if let Some(headstone) = headstone {
+                    item_events_to_delete.push(headstone);
+                }
+            } else if let Some(headstone) = headstone {
+                item_events_to_delete.extend(keep);
+                item_event_headstones.push(headstone);
+            }
+        }
+
+        let stamp = self.itc_stamp.event();
+
+        self.storage.start_transaction()
+            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+
+        for item_event in item_events_to_delete {
+            let event = self.storage.delete_item_event(item_event.id()).map_err(|e|
+                self.abort_transaction(e, "crdt unable to store item event")
+            )?;
+        }
+
+        for head_event in head_events_to_delete {
+            let event = self.storage.delete_head_event(head_event.id()).map_err(|e|
+                self.abort_transaction(e, "crdt unable to store head event")
+            )?;
+        }
+
+        let _ = self.storage.save_stamp(&stamp).map_err(|e|
+            self.abort_transaction(e, "crdt unable to save stamp")
+        )?;
+
+        let _ = self.storage.commit_transaction().map_err(|e|
+            self.abort_transaction(e, "crdt unable commit transaction")
+        )?;
+
+        self.itc_stamp = stamp;
+
+        Ok(())
+    }
 }
 
 
