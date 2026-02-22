@@ -1,3 +1,7 @@
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
+use std::mem::{Discriminant, discriminant};
+
 use exn::{bail, Exn, Result, ResultExt};
 use itc::{EventTree, IdTree, IntervalTreeClock, Stamp};
 use loro_fractional_index::FractionalIndex;
@@ -8,6 +12,43 @@ use crate::persistence::model::checklist::{HeadEvent, ItemEvent};
 use crate::persistence::{StorageError, ErrorKind};
 use crate::persistence::storage::Store;
 use crate::transport::transport::Transport;
+
+
+pub struct EventDelta {
+    from_itc_event: EventTree,
+    to_itc_event: EventTree,
+    head_events: Vec<HeadEvent>,
+    item_events: Vec<ItemEvent>,
+}
+
+impl EventDelta {
+    pub fn new(
+        from_itc_event: EventTree,
+        to_itc_event: EventTree,
+        head_events: Vec<HeadEvent>,
+        item_events: Vec<ItemEvent>,
+    ) -> Self {
+        Self { from_itc_event, to_itc_event, head_events, item_events }
+    }
+}
+
+
+#[derive(Debug, PartialEq)]
+pub struct Peer {
+    stamp: Stamp,
+    head_events: Vec<HeadEvent>,
+    item_events: Vec<ItemEvent>,
+}
+
+impl Peer {
+    pub fn new(
+        stamp: Stamp,
+        head_events: Vec<HeadEvent>,
+        item_events: Vec<ItemEvent>,
+    ) -> Self {
+        Self { stamp, head_events, item_events }
+    }
+}
 
 
 pub struct ChecklistCrdt<S: Store, T: Transport> {
@@ -318,6 +359,89 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
         self.save_checklist_item_event(stamp, event)
     }
+
+    pub fn get_event_delta(&self, peer_event: EventTree) -> Result<EventDelta, CrdtError> {
+        let mut head_events = self.storage.load_all_head_events()
+            .or_raise(|| CrdtError::recovered(""))?;
+        head_events.retain(|head| {
+            match peer_event.partial_cmp(head.itc_event()) {
+                Some(ordering) => ordering == Ordering::Less,
+                None => true,
+            }
+        });
+
+        let mut item_events = self.storage.load_all_item_events()
+            .or_raise(|| CrdtError::recovered(""))?;
+        item_events.retain(|item| {
+            match peer_event.partial_cmp(item.itc_event()) {
+                Some(ordering) => ordering == Ordering::Less,
+                None => true,
+            }
+        });
+
+        let own_event = self.itc_stamp.event_tree();
+
+        Ok(EventDelta::new(peer_event, own_event, head_events, item_events))
+    }
+
+    pub fn apply_event_delta(&mut self, delta: EventDelta) -> Result<(), CrdtError> {
+        if self.itc_stamp.event_tree() != delta.from_itc_event {
+            bail!(CrdtError::recovered(""));
+        }
+
+        let peer_stamp = Stamp::new(IdTree::zero(), delta.to_itc_event.clone());
+        let stamp = self.itc_stamp.join(&peer_stamp).event();
+
+        self.storage.start_transaction()
+            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+
+        for event in delta.head_events {
+            self.storage.save_head_event(&event).map_err(|e|
+                self.abort_transaction(e, "crdt unable to store head event")
+            )?;
+        }
+
+        for event in delta.item_events {
+            self.storage.save_item_event(&event).map_err(|e|
+                self.abort_transaction(e, "crdt unable to store item event")
+            )?;
+        }
+
+        let _ = self.storage.save_stamp(&stamp).map_err(|e|
+            self.abort_transaction(e, "crdt unable to save stamp")
+        )?;
+
+        let _ = self.storage.commit_transaction().map_err(|e|
+            self.abort_transaction(e, "crdt unable commit transaction")
+        )?;
+
+        self.itc_stamp = stamp;
+        Ok(())
+    }
+
+    pub fn fork(&mut self) -> Result<Peer, CrdtError> {
+        let (stamp, peer_stamp) = self.itc_stamp.fork();
+        let head_events = self.storage.load_all_head_events()
+            .or_raise(|| CrdtError::recovered(""))?;
+        let item_events = self.storage.load_all_item_events()
+            .or_raise(|| CrdtError::recovered(""))?;
+
+        self.storage.start_transaction()
+            .or_raise(|| CrdtError::recovered("unable to start transaction"))?;
+
+        let _ = self.storage.save_stamp(&stamp).map_err(|e|
+            self.abort_transaction(e, "crdt unable to save stamp")
+        )?;
+
+        let _ = self.storage.commit_transaction().map_err(|e|
+            self.abort_transaction(e, "crdt unable commit transaction")
+        )?;
+
+        self.itc_stamp = stamp;
+
+        Ok(Peer::new(peer_stamp, head_events, item_events))
+    }
+
 }
 
 
