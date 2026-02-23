@@ -11,7 +11,6 @@ use crate::crdt::crdt_error::CrdtError;
 use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::{StorageError, ErrorKind};
 use crate::persistence::storage::Store;
-use crate::transport::transport::Transport;
 
 
 #[macro_export]
@@ -75,14 +74,13 @@ impl Peer {
 }
 
 
-pub struct ChecklistCrdt<S: Store, T: Transport> {
+pub struct ChecklistCrdt<S: Store> {
     storage: S,
-    transport: T,
     itc_stamp: Stamp
 }
 
-impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
-    pub fn new(mut storage: S, transport: T) -> Result<Self, CrdtError> {
+impl<S: Store> ChecklistCrdt<S> {
+    pub fn new(mut storage: S) -> Result<Self, CrdtError> {
         let stamp = match storage.load_stamp() {
             Ok(s) => s,
             Err(e) if e.kind == ErrorKind::StampNone =>{
@@ -96,7 +94,6 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
         Ok(ChecklistCrdt {
             storage: storage,
-            transport: transport,
             itc_stamp: stamp,
         })
     }
@@ -516,9 +513,6 @@ mod test {
     fn init_test() {
         use crate::persistence::storage::FileStorage;
 
-        struct DummyTransport {}
-        impl Transport for DummyTransport {}
-
         let stamp_path = "./stamp.txt";
         let head_log_path = "./head_log.txt";
         let item_log_path = "./item_log.txt";
@@ -528,9 +522,8 @@ mod test {
             item_log_path,
         ).unwrap();
 
-        let transport = DummyTransport {};
 
-        let mut crdt = ChecklistCrdt::new(file_store, transport).unwrap();
+        let mut crdt = ChecklistCrdt::new(file_store).unwrap();
         let index = FractionalIndex::default();
         crdt.add_checklist_item(
             Uuid::now_v7(),
@@ -551,13 +544,8 @@ mod test {
 
     #[test]
     fn merge_test() {
-
-        struct DummyTransport {}
-        impl Transport for DummyTransport {}
-
         let mut crdt_1 = ChecklistCrdt::new(
             InMemoryStorage::new(),
-            DummyTransport {},
         ).unwrap();
 
         let head_id = crdt_1.add_checklist_head(None, "A".into(), Some("ab c de".into())).unwrap();
@@ -568,7 +556,6 @@ mod test {
         let peer_data = crdt_1.fork().unwrap();
         let mut crdt_2 = ChecklistCrdt::new(
             InMemoryStorage::init(peer_data.stamp, peer_data.head_operations, peer_data.item_operations),
-            DummyTransport {},
         ).unwrap();
 
         crdt_1.update_checklist_head_name(&head_id, "B".into()).unwrap();
