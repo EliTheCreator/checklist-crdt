@@ -49,12 +49,12 @@ impl FileStorage {
             .or_raise(|| StorageError::backend_open(format!("failed to open operation log file at {head_log_path}")))?;
 
         let mut offset: u64 = 0;
-        let head_positions: Vec<(u64, Uuid)> = FileStorage::load_all_head_operations_with_length(&head_log_file)?
+        let head_positions = Self::load_all_head_operations_with_length(&head_log_file)?
             .into_iter()
             .map(|head| {
                 offset += head.0;
                 (offset, head.1.id().clone())
-            }).collect();
+            }).collect::<Vec<(u64, Uuid)>>();
 
         let item_log_file = OpenOptions::new()
             .create(true)
@@ -64,12 +64,12 @@ impl FileStorage {
             .or_raise(|| StorageError::backend_open(format!("failed to open operation log file at {item_log_path}")))?;
 
         let mut offset: u64 = 0;
-        let item_positions: Vec<(u64, Uuid)> = FileStorage::load_all_item_operations_with_length(&item_log_file)?
+        let item_positions  = Self::load_all_item_operations_with_length(&item_log_file)?
             .into_iter()
             .map(|item| {
                 offset += item.0;
                 (offset, item.1.id().clone())
-            }).collect();
+            }).collect::<Vec<(u64, Uuid)>>();
 
         let file_store = FileStorage {
             stamp_file: stamp_file,
@@ -92,7 +92,7 @@ impl FileStorage {
     }
 
     fn get_next_string(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<String, StorageError> {
-        let first = FileStorage::get_next_str(iter, &format!("word 1 of {}", expected_value))?;
+        let first = Self::get_next_str(iter, &format!("word 1 of {}", expected_value))?;
 
         let mut words = Vec::<&str>::new();
         let (raw_count, word) = first.split_once(":")
@@ -107,7 +107,7 @@ impl FileStorage {
             ))?;
 
         for word_number in 2..=count {
-            let next_word = FileStorage::get_next_str(
+            let next_word = Self::get_next_str(
                 iter, &format!("word {} of {}", word_number, expected_value)
             )?;
             words.push(next_word)
@@ -117,13 +117,13 @@ impl FileStorage {
     }
 
     fn parse_uuid(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<Uuid, StorageError> {
-        FileStorage::get_next_str(iter, expected_value)?
+        Self::get_next_str(iter, expected_value)?
             .parse::<Uuid>()
             .or_raise(|| StorageError::data_decode("failed to decode Uuid"))
     }
 
     fn parse_optional_uuid(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<Option<Uuid>, StorageError> {
-        let s = FileStorage::get_next_str(iter, expected_value)?;
+        let s = Self::get_next_str(iter, expected_value)?;
 
         if s.is_empty() {
             return Ok(None);
@@ -135,20 +135,20 @@ impl FileStorage {
     }
 
     fn parse_itc_event(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<EventTree, StorageError> {
-        FileStorage::get_next_str(iter, expected_value)?
+        Self::get_next_str(iter, expected_value)?
             .parse::<EventTree>()
             .or_raise(|| StorageError::data_decode("failed to decode EventTree"))
     }
 
     fn parse_bool(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<bool, StorageError> {
-        FileStorage::get_next_str(iter, expected_value)?
+        Self::get_next_str(iter, expected_value)?
             .parse::<bool>()
             .or_raise(|| StorageError::data_decode("failed to decode bool"))
     }
 
     fn parse_operation_meta(iter: &mut Split<'_, &str>) -> Result<(Uuid, EventTree), StorageError> {
-        let id = FileStorage::parse_uuid(iter, "id")?;
-        let itc_event = FileStorage::parse_itc_event(iter, "itc event")?;
+        let id = Self::parse_uuid(iter, "id")?;
+        let itc_event = Self::parse_itc_event(iter, "itc event")?;
 
         Ok((id, itc_event))
     }
@@ -172,13 +172,11 @@ impl FileStorage {
     }
 
     fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<HeadOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let template_id = Self::parse_optional_uuid(iter, "template id")?;
 
-        let template_id = FileStorage::parse_optional_uuid(iter, "template id")?;
-
-        let name = FileStorage::get_next_string(iter, "name")?;
-
-        let description = Some(FileStorage::get_next_string(iter, "description")?)
+        let name = Self::get_next_string(iter, "name")?;
+        let description = Some(Self::get_next_string(iter, "description")?)
             .filter(|s| s.is_empty());
 
         Ok(HeadOperation::Creation { id, itc_event, template_id, name, description })
@@ -200,9 +198,9 @@ impl FileStorage {
     }
 
     fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
-        let head_id = FileStorage::parse_uuid(iter, "head id")?;
-        let name = FileStorage::get_next_string(iter, "name")?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let head_id = Self::parse_uuid(iter, "head id")?;
+        let name = Self::get_next_string(iter, "name")?;
 
         Ok(HeadOperation::NameUpdate { id, itc_event, head_id, name })
     }
@@ -224,9 +222,9 @@ impl FileStorage {
     }
 
     fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
-        let head_id = FileStorage::parse_uuid(iter, "head id")?;
-        let description = Some(FileStorage::get_next_string(iter, "description")?)
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let head_id = Self::parse_uuid(iter, "head id")?;
+        let description = Some(Self::get_next_string(iter, "description")?)
             .filter(|s| s.is_empty());
 
         Ok(HeadOperation::DescriptionUpdate { id, itc_event, head_id, description })
@@ -247,9 +245,9 @@ impl FileStorage {
     }
 
     fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
-        let head_id = FileStorage::parse_uuid(iter, "head id")?;
-        let completed = FileStorage::parse_bool(iter, "completed")?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let head_id = Self::parse_uuid(iter, "head id")?;
+        let completed = Self::parse_bool(iter, "completed")?;
 
         Ok(HeadOperation::CompletedUpdate { id, itc_event, head_id, completed })
     }
@@ -268,8 +266,8 @@ impl FileStorage {
     }
 
     fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<HeadOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
-        let head_id = FileStorage::parse_uuid(iter, "head id")?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let head_id = Self::parse_uuid(iter, "head id")?;
 
         Ok(HeadOperation::Deletion { id, itc_event, head_id })
     }
@@ -277,11 +275,11 @@ impl FileStorage {
     fn load_head_operation(line: &str) -> Result<(u64, HeadOperation), StorageError> {
         let mut parts = line.split(" ");
         let head = match parts.next() {
-            Some("Creation") => FileStorage::parse_head_creation(&mut parts),
-            Some("NameUpdate") => FileStorage::parse_head_name_update(&mut parts),
-            Some("DescriptionUpdate") => FileStorage::parse_head_description_update(&mut parts),
-            Some("CompletedUpdate") => FileStorage::parse_head_completed_update(&mut parts),
-            Some("Deletion") => FileStorage::parse_head_deletion(&mut parts),
+            Some("Creation") => Self::parse_head_creation(&mut parts),
+            Some("NameUpdate") => Self::parse_head_name_update(&mut parts),
+            Some("DescriptionUpdate") => Self::parse_head_description_update(&mut parts),
+            Some("CompletedUpdate") => Self::parse_head_completed_update(&mut parts),
+            Some("Deletion") => Self::parse_head_deletion(&mut parts),
             Some(prefix) => bail!(StorageError::data_decode(format!("unexpected prefix '{}'", prefix))),
             None => bail!(StorageError::data_decode("expected prefix, found end of line")),
         }?;
@@ -293,7 +291,7 @@ impl FileStorage {
             .lines()
             .map(|line| {
                 match line {
-                    Ok(l) => FileStorage::load_head_operation(&l),
+                    Ok(l) => Self::load_head_operation(&l),
                     Err(e) => Err(e).or_raise(||
                         StorageError::backend_read("unable to load line")
                     ),
@@ -320,13 +318,11 @@ impl FileStorage {
     }
 
     fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<ItemOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let head_id = Self::parse_uuid(iter, "head id")?;
 
-        let head_id = FileStorage::parse_uuid(iter, "head id")?;
-
-        let name = FileStorage::get_next_string(iter, "name")?;
-
-        let position = FileStorage::get_next_str(iter, "position")?;
+        let name = Self::get_next_string(iter, "name")?;
+        let position = Self::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
         Ok(ItemOperation::Creation { id, itc_event, head_id, name, position })
@@ -348,10 +344,10 @@ impl FileStorage {
     }
 
     fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
-        let item_id = FileStorage::parse_uuid(iter, "item id")?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let item_id = Self::parse_uuid(iter, "item id")?;
 
-        let name = FileStorage::get_next_string(iter, "name")?;
+        let name = Self::get_next_string(iter, "name")?;
 
         Ok(ItemOperation::NameUpdate { id, itc_event, item_id, name })
     }
@@ -371,10 +367,10 @@ impl FileStorage {
     }
 
     fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
-        let item_id = FileStorage::parse_uuid(iter, "item id")?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let item_id = Self::parse_uuid(iter, "item id")?;
 
-        let position = FileStorage::get_next_str(iter, "position")?;
+        let position = Self::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
         Ok(ItemOperation::PositionUpdate { id, itc_event, item_id, position })
@@ -395,9 +391,9 @@ impl FileStorage {
     }
 
     fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
-        let item_id = FileStorage::parse_uuid(iter, "item id")?;
-        let checked = FileStorage::parse_bool(iter, "checked")?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let item_id = Self::parse_uuid(iter, "item id")?;
+        let checked = Self::parse_bool(iter, "checked")?;
 
         Ok(ItemOperation::CheckedUpdate { id, itc_event, item_id, checked })
     }
@@ -416,8 +412,8 @@ impl FileStorage {
     }
 
     fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<ItemOperation, StorageError> {
-        let (id, itc_event) = FileStorage::parse_operation_meta(iter)?;
-        let item_id = FileStorage::parse_uuid(iter, "item id")?;
+        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let item_id = Self::parse_uuid(iter, "item id")?;
 
         Ok(ItemOperation::Deletion { id, itc_event, item_id })
     }
@@ -425,11 +421,11 @@ impl FileStorage {
     fn load_item_operation(line: &str) -> Result<(u64, ItemOperation), StorageError> {
         let mut parts = line.split(" ");
         let operation = match parts.next() {
-            Some("Creation") => FileStorage::parse_item_creation(&mut parts),
-            Some("NameUpdate") => FileStorage::parse_item_name_update(&mut parts),
-            Some("PositionUpdate") => FileStorage::parse_item_position_update(&mut parts),
-            Some("CheckedUpdate") => FileStorage::parse_item_checked_update(&mut parts),
-            Some("Deletion") => FileStorage::parse_item_deletion(&mut parts),
+            Some("Creation") => Self::parse_item_creation(&mut parts),
+            Some("NameUpdate") => Self::parse_item_name_update(&mut parts),
+            Some("PositionUpdate") => Self::parse_item_position_update(&mut parts),
+            Some("CheckedUpdate") => Self::parse_item_checked_update(&mut parts),
+            Some("Deletion") => Self::parse_item_deletion(&mut parts),
             Some(prefix) => bail!(StorageError::data_decode(format!("unexpected prefix '{}'", prefix))),
             None => bail!(StorageError::data_decode("expected prefix, found end of line")),
         }?;
@@ -441,7 +437,7 @@ impl FileStorage {
             .lines()
             .map(|line| {
                 match line {
-                    Ok(l) => FileStorage::load_item_operation(&l),
+                    Ok(l) => Self::load_item_operation(&l),
                     Err(e) => Err(e).or_raise(||
                         StorageError::backend_read("unable to load line")
                     ),
@@ -604,7 +600,7 @@ impl Store for FileStorage {
     }
 
     fn load_all_head_operations(&self) -> Result<Vec<HeadOperation>, StorageError> {
-        Ok(FileStorage::load_all_head_operations_with_length(&self.head_log_file.file)?
+        Ok(Self::load_all_head_operations_with_length(&self.head_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
@@ -646,7 +642,7 @@ impl Store for FileStorage {
             None
         };
 
-        let head_operation = FileStorage::load_head_operation(head_slice)
+        let head_operation = Self::load_head_operation(head_slice)
             .or_raise(|| StorageError::backend_read("failed to read head operation from file"))?
             .1;
 
@@ -741,7 +737,7 @@ impl Store for FileStorage {
     }
 
     fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError> {
-        Ok(FileStorage::load_all_item_operations_with_length(&self.item_log_file.file)?
+        Ok(Self::load_all_item_operations_with_length(&self.item_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
@@ -783,7 +779,7 @@ impl Store for FileStorage {
             None
         };
 
-        let item_operation = FileStorage::load_item_operation(item_slice)
+        let item_operation = Self::load_item_operation(item_slice)
             .or_raise(|| StorageError::backend_read("failed to read item operation from file"))?
             .1;
 
