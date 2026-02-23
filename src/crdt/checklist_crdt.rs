@@ -124,17 +124,10 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         )
     }
 
-    fn erase_checklist_head(
-        &mut self,
-        id: &Uuid,
-    ) -> Result<HeadOperation, CrdtError> {
-        let stamp = self.itc_stamp.event();
-
-        transaction!(self, stamp, {
-            self.storage.delete_head_operation(&id).map_err(|e|
-                self.abort_transaction(e, "crdt unable to erase head operation")
-            )
-        })
+    fn erase_checklist_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, CrdtError> {
+        self.storage.erase_head_operation(&id).map_err(|e|
+            self.abort_transaction(e, "crdt unable to erase head operation")
+        )
     }
 
     pub fn add_checklist_head(
@@ -232,17 +225,10 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         )
     }
 
-    fn erase_checklist_item(
-        &mut self,
-        id: &Uuid,
-    ) -> Result<ItemOperation, CrdtError> {
-        let stamp = self.itc_stamp.event();
-
-        transaction!(self, stamp, {
-            self.storage.delete_item_operation(id).map_err(|e|
-                self.abort_transaction(e, "crdt unable to erase item operation")
-            )
-        })
+    fn erase_checklist_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, CrdtError> {
+        self.storage.erase_item_operation(id).map_err(|e|
+            self.abort_transaction(e, "crdt unable to erase item operation")
+        )
     }
 
     pub fn add_checklist_item(
@@ -502,21 +488,12 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         let stamp = self.itc_stamp.event();
 
         transaction!(self, stamp, {
-            let mut deleted_head_operations = Vec::new();
-            let mut deleted_item_operations = Vec::new();
-            for head_operation_id in trimable_head_operations_ids {
-                let head_operation = self.storage.delete_head_operation(&head_operation_id).map_err(|e|
-                    self.abort_transaction(e, "crdt unable to store head operation")
-                )?;
-                deleted_head_operations.push(head_operation);
-            }
-
-            for item_operation_id in trimable_item_operations_ids {
-                let item_operation = self.storage.delete_item_operation(&item_operation_id).map_err(|e|
-                    self.abort_transaction(e, "crdt unable to store item operation")
-                )?;
-                deleted_item_operations.push(item_operation);
-            }
+            let deleted_item_operations = trimable_item_operations_ids.into_iter()
+                .map(|id| self.erase_checklist_item_operation(&id))
+                .collect::<Result<Vec<ItemOperation>, CrdtError>>()?;
+            let deleted_head_operations = trimable_head_operations_ids.into_iter()
+                .map(|id| self.erase_checklist_head_operation(&id))
+                .collect::<Result<Vec<HeadOperation>, CrdtError>>()?;
 
             Ok((deleted_head_operations, deleted_item_operations))
         })

@@ -38,7 +38,7 @@ impl Store for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn delete_head_operation(&mut self, _: &Uuid) -> Result<HeadOperation, StorageError> {
+    fn erase_head_operation(&mut self, _: &Uuid) -> Result<HeadOperation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
@@ -50,7 +50,7 @@ impl Store for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn delete_item_operation(&mut self, _: &Uuid) -> Result<ItemOperation, StorageError> {
+    fn erase_item_operation(&mut self, _: &Uuid) -> Result<ItemOperation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 }

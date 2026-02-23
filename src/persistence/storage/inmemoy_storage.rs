@@ -113,7 +113,7 @@ impl Store for InMemoryStorage {
         Ok(self.head_operations.clone())
     }
 
-    fn delete_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
+    fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
         let index = match self.head_operations.binary_search_by_key(id, |h| *h.id()) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
@@ -144,7 +144,7 @@ impl Store for InMemoryStorage {
         Ok(self.item_operations.clone())
     }
 
-    fn delete_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
+    fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
         let index = match self.item_operations.binary_search_by_key(id, |i| *i.id()) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(

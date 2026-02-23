@@ -596,7 +596,7 @@ impl Store for FileStorage {
 
         if self.in_transaction {
             self.rollback_stack.push(Box::new(move |store: &mut FileStorage|
-                store.delete_head_operation(&id).map(|_| ())
+                store.erase_head_operation(&id).map(|_| ())
             ));
         }
 
@@ -610,7 +610,7 @@ impl Store for FileStorage {
         )
     }
 
-    fn delete_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
+    fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
         let file = &mut self.head_log_file.file;
         let operation_positions = &mut self.head_log_file.operation_positions;
 
@@ -733,7 +733,7 @@ impl Store for FileStorage {
 
         if self.in_transaction {
             self.rollback_stack.push(Box::new(move |store: &mut FileStorage|
-                store.delete_item_operation(&id).map(|_| ())
+                store.erase_item_operation(&id).map(|_| ())
             ));
         }
 
@@ -747,7 +747,7 @@ impl Store for FileStorage {
         )
     }
 
-    fn delete_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
+    fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
         let file = &mut self.item_log_file.file;
         let operation_positions = &mut self.item_log_file.operation_positions;
 
