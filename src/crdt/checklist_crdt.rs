@@ -52,7 +52,7 @@ impl OperationDelta {
         head_operations: Vec<HeadOperation>,
         item_operations: Vec<ItemOperation>,
     ) -> Self {
-        Self { from_itc_event, to_itc_event, head_operations: head_operations, item_operations: item_operations }
+        Self { from_itc_event, to_itc_event, head_operations, item_operations }
     }
 }
 
@@ -412,7 +412,8 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             .map(|operation| operation.id().clone())
             .collect::<Vec<Uuid>>();
 
-        let deleted_operations_ids = deleted_operations.into_iter().map(|operation| {
+        let deleted_operations_ids = deleted_operations.into_iter()
+            .map(|operation| {
                 match operation {
                     HeadOperation::Deletion { head_id, .. } => head_id.clone(),
                     _ => unreachable!()
@@ -423,7 +424,10 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         Ok((trimable_operations_ids, deleted_operations_ids))
     }
 
-    fn find_trimable_item_operations(&self, deleted_head_operations_ids: HashSet<Uuid>) -> Result<Vec<Uuid>, CrdtError> {
+    fn find_trimable_item_operations(
+        &self,
+        deleted_head_operations_ids: HashSet<Uuid>
+    ) -> Result<Vec<Uuid>, CrdtError> {
         let operations = self.get_all_checklist_items()?;
         let grouped_operations = operations.iter()
             .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&ItemOperation>>, e| {
@@ -480,7 +484,8 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     }
 
     pub fn trim_operations(&mut self) -> Result<(Vec<HeadOperation>, Vec<ItemOperation>), CrdtError> {
-        let (trimable_head_operations_ids, deleted_head_operations_ids) = self.find_trimable_head_operations()
+        let (trimable_head_operations_ids, deleted_head_operations_ids) = self
+            .find_trimable_head_operations()
             .or_raise(|| CrdtError::recoverable("failed to find all trimable head operations"))?;
         let trimable_item_operations_ids = self.find_trimable_item_operations(deleted_head_operations_ids)
             .or_raise(|| CrdtError::recoverable("failed to find all trimable item operations"))?;
