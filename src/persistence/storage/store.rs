@@ -2,7 +2,7 @@ use exn::Result;
 use itc::Stamp;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::{HeadEvent, ItemEvent};
+use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::storage_error::StorageError;
 
 
@@ -14,11 +14,11 @@ pub trait Store {
     fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError>;
     fn load_stamp(&mut self) -> Result<Stamp, StorageError>;
 
-    fn save_head_event(&mut self, event: &HeadEvent) -> Result<(), StorageError>;
-    fn load_all_head_events(&self) -> Result<Vec<HeadEvent>, StorageError>;
-    fn delete_head_event(&mut self, id: &Uuid) -> Result<HeadEvent, StorageError>;
+    fn save_head_operation(&mut self, operation: &HeadOperation) -> Result<(), StorageError>;
+    fn load_all_head_operations(&self) -> Result<Vec<HeadOperation>, StorageError>;
+    fn delete_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError>;
 
-    fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError>;
-    fn load_all_item_events(&self) -> Result<Vec<ItemEvent>, StorageError>;
-    fn delete_item_event(&mut self, id: &Uuid) -> Result<ItemEvent, StorageError>;
+    fn save_item_operation(&mut self, operation: &ItemOperation) -> Result<(), StorageError>;
+    fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError>;
+    fn delete_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError>;
 }

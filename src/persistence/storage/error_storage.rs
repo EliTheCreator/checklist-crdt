@@ -2,7 +2,7 @@ use exn::{Result, bail};
 use itc::Stamp;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::{HeadEvent, ItemEvent};
+use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
@@ -30,27 +30,27 @@ impl Store for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_head_event(&mut self, _: &HeadEvent) -> Result<(), StorageError> {
+    fn save_head_operation(&mut self, _: &HeadOperation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_head_events(&self) -> Result<Vec<HeadEvent>, StorageError> {
+    fn load_all_head_operations(&self) -> Result<Vec<HeadOperation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn delete_head_event(&mut self, _: &Uuid) -> Result<HeadEvent, StorageError> {
+    fn delete_head_operation(&mut self, _: &Uuid) -> Result<HeadOperation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_item_event(&mut self, _: &ItemEvent) -> Result<(), StorageError> {
+    fn save_item_operation(&mut self, _: &ItemOperation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_item_events(&self) -> Result<Vec<ItemEvent>, StorageError> {
+    fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn delete_item_event(&mut self, _: &Uuid) -> Result<ItemEvent, StorageError> {
+    fn delete_item_operation(&mut self, _: &Uuid) -> Result<ItemOperation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 }

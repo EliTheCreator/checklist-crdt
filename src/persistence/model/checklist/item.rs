@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ItemEvent {
+pub enum ItemOperation {
     Creation {
         id: Uuid,
         itc_event: EventTree,
@@ -37,34 +37,34 @@ pub enum ItemEvent {
     },
 }
 
-impl ItemEvent {
+impl ItemOperation {
     pub fn id(&self) -> &Uuid {
         match self {
-            ItemEvent::Creation { id, .. } => id,
-            ItemEvent::NameUpdate { id, .. } => id,
-            ItemEvent::PositionUpdate { id, .. } => id,
-            ItemEvent::CheckedUpdate { id, .. } => id,
-            ItemEvent::Deletion { id, .. } => id,
+            ItemOperation::Creation { id, .. } => id,
+            ItemOperation::NameUpdate { id, .. } => id,
+            ItemOperation::PositionUpdate { id, .. } => id,
+            ItemOperation::CheckedUpdate { id, .. } => id,
+            ItemOperation::Deletion { id, .. } => id,
         }
     }
 
     pub fn itc_event(&self) -> &EventTree {
         match self {
-            ItemEvent::Creation { itc_event, .. } => itc_event,
-            ItemEvent::NameUpdate { itc_event, .. } => itc_event,
-            ItemEvent::PositionUpdate { itc_event, .. } => itc_event,
-            ItemEvent::CheckedUpdate { itc_event, .. } => itc_event,
-            ItemEvent::Deletion { itc_event, .. } => itc_event,
+            ItemOperation::Creation { itc_event, .. } => itc_event,
+            ItemOperation::NameUpdate { itc_event, .. } => itc_event,
+            ItemOperation::PositionUpdate { itc_event, .. } => itc_event,
+            ItemOperation::CheckedUpdate { itc_event, .. } => itc_event,
+            ItemOperation::Deletion { itc_event, .. } => itc_event,
         }
     }
 
     pub fn item_id(&self) -> &Uuid {
         match self {
-            ItemEvent::Creation { id, .. } => id,
-            ItemEvent::NameUpdate { item_id, .. } => item_id,
-            ItemEvent::PositionUpdate { item_id, .. } => item_id,
-            ItemEvent::CheckedUpdate { item_id, .. } => item_id,
-            ItemEvent::Deletion { item_id, .. } => item_id,
+            ItemOperation::Creation { id, .. } => id,
+            ItemOperation::NameUpdate { item_id, .. } => item_id,
+            ItemOperation::PositionUpdate { item_id, .. } => item_id,
+            ItemOperation::CheckedUpdate { item_id, .. } => item_id,
+            ItemOperation::Deletion { item_id, .. } => item_id,
         }
     }
 }

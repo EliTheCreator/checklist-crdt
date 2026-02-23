@@ -8,7 +8,7 @@ use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
 use crate::crdt::crdt_error::CrdtError;
-use crate::persistence::model::checklist::{HeadEvent, ItemEvent};
+use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::{StorageError, ErrorKind};
 use crate::persistence::storage::Store;
 use crate::transport::transport::Transport;
@@ -38,21 +38,21 @@ macro_rules! transaction {
 }
 
 
-pub struct EventDelta {
+pub struct OperationDelta {
     from_itc_event: EventTree,
     to_itc_event: EventTree,
-    head_events: Vec<HeadEvent>,
-    item_events: Vec<ItemEvent>,
+    head_operations: Vec<HeadOperation>,
+    item_operations: Vec<ItemOperation>,
 }
 
-impl EventDelta {
+impl OperationDelta {
     pub fn new(
         from_itc_event: EventTree,
         to_itc_event: EventTree,
-        head_events: Vec<HeadEvent>,
-        item_events: Vec<ItemEvent>,
+        head_operations: Vec<HeadOperation>,
+        item_operations: Vec<ItemOperation>,
     ) -> Self {
-        Self { from_itc_event, to_itc_event, head_events, item_events }
+        Self { from_itc_event, to_itc_event, head_operations: head_operations, item_operations: item_operations }
     }
 }
 
@@ -60,17 +60,17 @@ impl EventDelta {
 #[derive(Debug, PartialEq)]
 pub struct Peer {
     stamp: Stamp,
-    head_events: Vec<HeadEvent>,
-    item_events: Vec<ItemEvent>,
+    head_operations: Vec<HeadOperation>,
+    item_operations: Vec<ItemOperation>,
 }
 
 impl Peer {
     pub fn new(
         stamp: Stamp,
-        head_events: Vec<HeadEvent>,
-        item_events: Vec<ItemEvent>,
+        head_operations: Vec<HeadOperation>,
+        item_operations: Vec<ItemOperation>,
     ) -> Self {
-        Self { stamp, head_events, item_events }
+        Self { stamp, head_operations, item_operations }
     }
 }
 
@@ -118,21 +118,21 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         }
     }
 
-    fn save_checklist_head_event(&mut self, event: HeadEvent) -> Result<(), CrdtError> {
-        self.storage.save_head_event(&event).map_err(|e|
-            self.abort_transaction(e, "crdt unable to store head event")
+    fn save_checklist_head_operation(&mut self, operation: HeadOperation) -> Result<(), CrdtError> {
+        self.storage.save_head_operation(&operation).map_err(|e|
+            self.abort_transaction(e, "crdt unable to store head operation")
         )
     }
 
     fn erase_checklist_head(
         &mut self,
         id: &Uuid,
-    ) -> Result<HeadEvent, CrdtError> {
+    ) -> Result<HeadOperation, CrdtError> {
         let stamp = self.itc_stamp.event();
 
         transaction!(self, stamp, {
-            self.storage.delete_head_event(&id).map_err(|e|
-                self.abort_transaction(e, "crdt unable to erase head event")
+            self.storage.delete_head_operation(&id).map_err(|e|
+                self.abort_transaction(e, "crdt unable to erase head operation")
             )
         })
     }
@@ -145,7 +145,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     ) -> Result<Uuid, CrdtError> {
         let stamp = self.itc_stamp.event();
         let id = Uuid::now_v7();
-        let event = HeadEvent::Creation {
+        let operation = HeadOperation::Creation {
             id: id.clone(),
             itc_event: stamp.event_tree(),
             template_id: template_id,
@@ -154,7 +154,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         };
 
         let _: Result<(), CrdtError> = transaction!(self, stamp, {
-            self.save_checklist_head_event(event)
+            self.save_checklist_head_operation(operation)
         });
         Ok(id)
     }
@@ -165,14 +165,14 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         name: String,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let event = HeadEvent::NameUpdate {
+        let operation = HeadOperation::NameUpdate {
             id: Uuid::now_v7(),
             head_id: head_id.clone(),
             itc_event: stamp.event_tree(),
             name: name,
         };
 
-        transaction!(self, stamp, { self.save_checklist_head_event(event) })
+        transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
     }
 
     pub fn update_checklist_head_description(
@@ -181,14 +181,14 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         description: Option<String>,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let event = HeadEvent::DescriptionUpdate {
+        let operation = HeadOperation::DescriptionUpdate {
             id: Uuid::now_v7(),
             head_id: head_id.clone(),
             itc_event: stamp.event_tree(),
             description: description,
         };
 
-        transaction!(self, stamp, { self.save_checklist_head_event(event) })
+        transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
     }
 
     pub fn update_checklist_head_completed(
@@ -197,14 +197,14 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         completed: bool,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let event = HeadEvent::CompletedUpdate {
+        let operation = HeadOperation::CompletedUpdate {
             id: Uuid::now_v7(),
             head_id: head_id.clone(),
             itc_event: stamp.event_tree(),
             completed: completed,
         };
 
-        transaction!(self, stamp, { self.save_checklist_head_event(event) })
+        transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
     }
 
     pub fn delete_checklist_head(
@@ -212,35 +212,35 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         head_id: &Uuid,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let event = HeadEvent::Deletion {
+        let operation = HeadOperation::Deletion {
             id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
             head_id: head_id.clone(),
         };
 
-        transaction!(self, stamp, { self.save_checklist_head_event(event) })
+        transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
     }
 
-    pub fn get_all_checklist_heads(&self) -> Result<Vec<HeadEvent>, CrdtError> {
-        self.storage.load_all_head_events()
-            .or_raise(|| CrdtError::recovered("crdt unable to load all head events"))
+    pub fn get_all_checklist_heads(&self) -> Result<Vec<HeadOperation>, CrdtError> {
+        self.storage.load_all_head_operations()
+            .or_raise(|| CrdtError::recovered("crdt unable to load all head operations"))
     }
 
-    fn save_checklist_item_event(&mut self, event: ItemEvent) -> Result<(), CrdtError> {
-        self.storage.save_item_event(&event).map_err(|e|
-            self.abort_transaction(e, "crdt unable to store item event")
+    fn save_checklist_item_operation(&mut self, operation: ItemOperation) -> Result<(), CrdtError> {
+        self.storage.save_item_operation(&operation).map_err(|e|
+            self.abort_transaction(e, "crdt unable to store item operation")
         )
     }
 
     fn erase_checklist_item(
         &mut self,
         id: &Uuid,
-    ) -> Result<ItemEvent, CrdtError> {
+    ) -> Result<ItemOperation, CrdtError> {
         let stamp = self.itc_stamp.event();
 
         transaction!(self, stamp, {
-            self.storage.delete_item_event(id).map_err(|e|
-                self.abort_transaction(e, "crdt unable to erase item event")
+            self.storage.delete_item_operation(id).map_err(|e|
+                self.abort_transaction(e, "crdt unable to erase item operation")
             )
         })
     }
@@ -253,7 +253,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
     ) -> Result<Uuid, CrdtError> {
         let stamp = self.itc_stamp.event();
         let id = Uuid::now_v7();
-        let event = ItemEvent::Creation {
+        let operation = ItemOperation::Creation {
             id: id.clone(),
             itc_event: stamp.event_tree(),
             head_id: head_id,
@@ -262,7 +262,7 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         };
 
         let _: Result<(), CrdtError> = transaction!(self, stamp, {
-            self.save_checklist_item_event(event)
+            self.save_checklist_item_operation(operation)
         });
         Ok(id)
     }
@@ -273,14 +273,14 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         name: String,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let event = ItemEvent::NameUpdate {
+        let operation = ItemOperation::NameUpdate {
             id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
             item_id: item_id.clone(),
             name: name,
         };
 
-        transaction!(self, stamp, { self.save_checklist_item_event(event) })
+        transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
     }
 
     pub fn update_checklist_item_position(
@@ -289,14 +289,14 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         position: FractionalIndex,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let event = ItemEvent::PositionUpdate {
+        let operation = ItemOperation::PositionUpdate {
             id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
             item_id: item_id.clone(),
             position: position,
         };
 
-        transaction!(self, stamp, { self.save_checklist_item_event(event) })
+        transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
     }
 
     pub fn update_checklist_item_checked(
@@ -305,14 +305,14 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         checked: bool,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let event = ItemEvent::CheckedUpdate {
+        let operation = ItemOperation::CheckedUpdate {
             id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
             item_id: item_id.clone(),
             checked: checked,
         };
 
-        transaction!(self, stamp, { self.save_checklist_item_event(event) })
+        transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
     }
 
     pub fn delete_checklist_item(
@@ -320,43 +320,43 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         item_id: &Uuid,
     ) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let event: ItemEvent = ItemEvent::Deletion {
+        let operation: ItemOperation = ItemOperation::Deletion {
             id: Uuid::now_v7(),
             itc_event: stamp.event_tree(),
             item_id: item_id.clone(),
         };
 
-        transaction!(self, stamp, { self.save_checklist_item_event(event) })
+        transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
     }
 
-    pub fn get_all_checklist_items(&self) -> Result<Vec<ItemEvent>, CrdtError> {
-        self.storage.load_all_item_events()
-            .or_raise(|| CrdtError::recovered("crdt unable to load all item events"))
+    pub fn get_all_checklist_items(&self) -> Result<Vec<ItemOperation>, CrdtError> {
+        self.storage.load_all_item_operations()
+            .or_raise(|| CrdtError::recovered("crdt unable to load all item operations"))
     }
 
-    pub fn get_event_delta(&self, peer_event: EventTree) -> Result<EventDelta, CrdtError> {
-        let mut head_events = self.get_all_checklist_heads()?;
-        head_events.retain(|head| {
-            match peer_event.partial_cmp(head.itc_event()) {
+    pub fn get_operation_delta(&self, peer_operation: EventTree) -> Result<OperationDelta, CrdtError> {
+        let mut head_operations = self.get_all_checklist_heads()?;
+        head_operations.retain(|head| {
+            match peer_operation.partial_cmp(head.itc_event()) {
                 Some(ordering) => ordering == Ordering::Less,
                 None => true,
             }
         });
 
-        let mut item_events = self.get_all_checklist_items()?;
-        item_events.retain(|item| {
-            match peer_event.partial_cmp(item.itc_event()) {
+        let mut item_operations = self.get_all_checklist_items()?;
+        item_operations.retain(|item| {
+            match peer_operation.partial_cmp(item.itc_event()) {
                 Some(ordering) => ordering == Ordering::Less,
                 None => true,
             }
         });
 
-        let own_event = self.itc_stamp.event_tree();
+        let own_operation = self.itc_stamp.event_tree();
 
-        Ok(EventDelta::new(peer_event, own_event, head_events, item_events))
+        Ok(OperationDelta::new(peer_operation, own_operation, head_operations, item_operations))
     }
 
-    pub fn apply_event_delta(&mut self, delta: EventDelta) -> Result<(), CrdtError> {
+    pub fn apply_operation_delta(&mut self, delta: OperationDelta) -> Result<(), CrdtError> {
         // if self.itc_stamp.event_tree() != delta.from_itc_event {
         //     bail!(CrdtError::recovered(""));
         // }
@@ -365,12 +365,12 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
         let stamp = self.itc_stamp.join(&peer_stamp).event();
 
         transaction!(self, stamp, {
-            for event in delta.head_events {
-                self.save_checklist_head_event(event)?;
+            for operation in delta.head_operations {
+                self.save_checklist_head_operation(operation)?;
             }
 
-            for event in delta.item_events {
-                self.save_checklist_item_event(event)?;
+            for operation in delta.item_operations {
+                self.save_checklist_item_operation(operation)?;
             }
 
             Ok(())
@@ -379,27 +379,27 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
 
     pub fn fork(&mut self) -> Result<Peer, CrdtError> {
         let (stamp, peer_stamp) = self.itc_stamp.fork();
-        let head_events = self.get_all_checklist_heads()?;
-        let item_events = self.get_all_checklist_items()?;
+        let head_operations = self.get_all_checklist_heads()?;
+        let item_operations = self.get_all_checklist_items()?;
 
         let _: Result<(), CrdtError> = transaction!(self, stamp, { Ok(()) });
-        Ok(Peer::new(peer_stamp, head_events, item_events))
+        Ok(Peer::new(peer_stamp, head_operations, item_operations))
     }
 
-    fn find_trimable_head_events(&self) -> Result<(Vec<Uuid>, HashSet<Uuid>), CrdtError> {
-        let events = self.get_all_checklist_heads()?;
-        let grouped_events = events.iter()
-            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&HeadEvent>>, e| {
+    fn find_trimable_head_operations(&self) -> Result<(Vec<Uuid>, HashSet<Uuid>), CrdtError> {
+        let operations = self.get_all_checklist_heads()?;
+        let grouped_operations = operations.iter()
+            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&HeadOperation>>, e| {
                 m.entry(e.head_id().clone()).or_default().push(e);
                 m
             });
 
-        let mut trimable_events = Vec::new();
-        let mut deleted_events = Vec::new();
-        let deletion_discriminant = discriminant(&HeadEvent::Deletion { id: Uuid::default(), head_id: Uuid::default(), itc_event: EventTree::zero() });
-        for group in grouped_events.into_values() {
+        let mut trimable_operations = Vec::new();
+        let mut deleted_operations = Vec::new();
+        let deletion_discriminant = discriminant(&HeadOperation::Deletion { id: Uuid::default(), head_id: Uuid::default(), itc_event: EventTree::zero() });
+        for group in grouped_operations.into_values() {
             let discriminant_bins = group.into_iter()
-                .fold(HashMap::new(), |mut m: HashMap<_,Vec<&HeadEvent>>, e| {
+                .fold(HashMap::new(), |mut m: HashMap<_,Vec<&HeadOperation>>, e| {
                     m.entry(discriminant(e)).or_default().push(e);
                     m
                 });
@@ -407,49 +407,49 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             let mut keep = Vec::new();
             let mut headstone = None;
             for mut bin in discriminant_bins.into_values() {
-                if let Some(event) = bin.pop() {
-                    if discriminant(event) == deletion_discriminant {
-                        headstone = Some(event)
+                if let Some(operation) = bin.pop() {
+                    if discriminant(operation) == deletion_discriminant {
+                        headstone = Some(operation)
                     } else {
-                        keep.push(event);
+                        keep.push(operation);
                     }
-                    trimable_events.extend( bin);
+                    trimable_operations.extend( bin);
                 }
             }
             if let Some(headstone) = headstone {
-                trimable_events.extend(keep);
-                deleted_events.push(headstone);
+                trimable_operations.extend(keep);
+                deleted_operations.push(headstone);
             }
         }
 
-        let trimable_events_ids = trimable_events.into_iter()
-            .map(|event| event.id().clone())
+        let trimable_operations_ids = trimable_operations.into_iter()
+            .map(|operation| operation.id().clone())
             .collect::<Vec<Uuid>>();
 
-        let deleted_events_ids = deleted_events.into_iter().map(|event| {
-                match event {
-                    HeadEvent::Deletion { head_id, .. } => head_id.clone(),
+        let deleted_operations_ids = deleted_operations.into_iter().map(|operation| {
+                match operation {
+                    HeadOperation::Deletion { head_id, .. } => head_id.clone(),
                     _ => unreachable!()
                 }
             })
             .collect::<HashSet<Uuid>>();
 
-        Ok((trimable_events_ids, deleted_events_ids))
+        Ok((trimable_operations_ids, deleted_operations_ids))
     }
 
-    fn find_trimable_item_events(&self, deleted_head_events_ids: HashSet<Uuid>) -> Result<Vec<Uuid>, CrdtError> {
-        let events = self.get_all_checklist_items()?;
-        let grouped_events = events.iter()
-            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&ItemEvent>>, e| {
+    fn find_trimable_item_operations(&self, deleted_head_operations_ids: HashSet<Uuid>) -> Result<Vec<Uuid>, CrdtError> {
+        let operations = self.get_all_checklist_items()?;
+        let grouped_operations = operations.iter()
+            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&ItemOperation>>, e| {
                 m.entry(e.item_id().clone()).or_default().push(e);
                 m
             });
 
-        let mut trimable_events = Vec::new();
-        let mut deleted_events = Vec::new();
-        for group in grouped_events.into_values() {
+        let mut trimable_operations = Vec::new();
+        let mut deleted_operations = Vec::new();
+        for group in grouped_operations.into_values() {
             let discriminant_bins = group.into_iter()
-                .fold(HashMap::new(), |mut m: HashMap<_,Vec<&ItemEvent>>, e| {
+                .fold(HashMap::new(), |mut m: HashMap<_,Vec<&ItemOperation>>, e| {
                     m.entry(discriminant(e)).or_default().push(e);
                     m
                 });
@@ -458,67 +458,67 @@ impl<S: Store, T: Transport> ChecklistCrdt<S, T> {
             let mut headstone = None;
             let mut delete_all = false;
             for mut bin in discriminant_bins.into_values() {
-                let event = match bin.pop() {
+                let operation = match bin.pop() {
                     Some(e) => e,
                     None => continue,
                 };
-                match event {
-                    ItemEvent::Creation { head_id, .. } => {
-                        if deleted_head_events_ids.contains(&head_id) {
+                match operation {
+                    ItemOperation::Creation { head_id, .. } => {
+                        if deleted_head_operations_ids.contains(&head_id) {
                             delete_all = true;
                         }
-                        keep.push(event);
+                        keep.push(operation);
                     },
-                    ItemEvent::Deletion { .. } => headstone = Some(event),
-                    _ => keep.push(event),
+                    ItemOperation::Deletion { .. } => headstone = Some(operation),
+                    _ => keep.push(operation),
                 }
-                trimable_events.extend( bin);
+                trimable_operations.extend( bin);
             }
 
             if delete_all {
-                trimable_events.extend(keep);
+                trimable_operations.extend(keep);
                 if let Some(headstone) = headstone {
-                    trimable_events.push(headstone);
+                    trimable_operations.push(headstone);
                 }
             } else if let Some(headstone) = headstone {
-                trimable_events.extend(keep);
-                deleted_events.push(headstone);
+                trimable_operations.extend(keep);
+                deleted_operations.push(headstone);
             }
         }
 
-        let trimable_events_ids = trimable_events.into_iter()
-            .map(|event| event.id().clone())
+        let trimable_operations_ids = trimable_operations.into_iter()
+            .map(|operation| operation.id().clone())
             .collect::<Vec<Uuid>>();
 
-        Ok(trimable_events_ids)
+        Ok(trimable_operations_ids)
     }
 
-    pub fn trim_events(&mut self) -> Result<(Vec<HeadEvent>, Vec<ItemEvent>), CrdtError> {
-        let (trimable_head_events_ids, deleted_head_events_ids) = self.find_trimable_head_events()
-            .or_raise(|| CrdtError::recoverable("failed to find all trimable head events"))?;
-        let trimable_item_events_ids = self.find_trimable_item_events(deleted_head_events_ids)
-            .or_raise(|| CrdtError::recoverable("failed to find all trimable item events"))?;
+    pub fn trim_operations(&mut self) -> Result<(Vec<HeadOperation>, Vec<ItemOperation>), CrdtError> {
+        let (trimable_head_operations_ids, deleted_head_operations_ids) = self.find_trimable_head_operations()
+            .or_raise(|| CrdtError::recoverable("failed to find all trimable head operations"))?;
+        let trimable_item_operations_ids = self.find_trimable_item_operations(deleted_head_operations_ids)
+            .or_raise(|| CrdtError::recoverable("failed to find all trimable item operations"))?;
 
         let stamp = self.itc_stamp.event();
 
         transaction!(self, stamp, {
-            let mut deleted_head_events = Vec::new();
-            let mut deleted_item_events = Vec::new();
-            for head_event_id in trimable_head_events_ids {
-                let head_event = self.storage.delete_head_event(&head_event_id).map_err(|e|
-                    self.abort_transaction(e, "crdt unable to store head event")
+            let mut deleted_head_operations = Vec::new();
+            let mut deleted_item_operations = Vec::new();
+            for head_operation_id in trimable_head_operations_ids {
+                let head_operation = self.storage.delete_head_operation(&head_operation_id).map_err(|e|
+                    self.abort_transaction(e, "crdt unable to store head operation")
                 )?;
-                deleted_head_events.push(head_event);
+                deleted_head_operations.push(head_operation);
             }
 
-            for item_event_id in trimable_item_events_ids {
-                let item_event = self.storage.delete_item_event(&item_event_id).map_err(|e|
-                    self.abort_transaction(e, "crdt unable to store item event")
+            for item_operation_id in trimable_item_operations_ids {
+                let item_operation = self.storage.delete_item_operation(&item_operation_id).map_err(|e|
+                    self.abort_transaction(e, "crdt unable to store item operation")
                 )?;
-                deleted_item_events.push(item_event);
+                deleted_item_operations.push(item_operation);
             }
 
-            Ok((deleted_head_events, deleted_item_events))
+            Ok((deleted_head_operations, deleted_item_operations))
         })
     }
 }
@@ -585,7 +585,7 @@ mod test {
 
         let peer_data = crdt_1.fork().unwrap();
         let mut crdt_2 = ChecklistCrdt::new(
-            InMemoryStorage::init(peer_data.stamp, peer_data.head_events, peer_data.item_events),
+            InMemoryStorage::init(peer_data.stamp, peer_data.head_operations, peer_data.item_operations),
             DummyTransport {},
         ).unwrap();
 
@@ -597,11 +597,11 @@ mod test {
         crdt_2.update_checklist_item_name(&second, "3.2".into()).unwrap();
         crdt_1.update_checklist_item_name(&second, "3.1".into()).unwrap();
 
-        let delta_1_2 = crdt_1.get_event_delta(crdt_2.itc_stamp.event_tree()).unwrap();
-        let delta_2_1 = crdt_2.get_event_delta(crdt_1.itc_stamp.event_tree()).unwrap();
+        let delta_1_2 = crdt_1.get_operation_delta(crdt_2.itc_stamp.event_tree()).unwrap();
+        let delta_2_1 = crdt_2.get_operation_delta(crdt_1.itc_stamp.event_tree()).unwrap();
 
-        crdt_1.apply_event_delta(delta_2_1).unwrap();
-        crdt_2.apply_event_delta(delta_1_2).unwrap();
+        crdt_1.apply_operation_delta(delta_2_1).unwrap();
+        crdt_2.apply_operation_delta(delta_1_2).unwrap();
 
         let mut peer_1 = crdt_1.fork().unwrap();
         peer_1.stamp = Stamp::seed();

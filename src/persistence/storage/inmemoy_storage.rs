@@ -2,7 +2,7 @@ use exn::{Result, bail};
 use itc::Stamp;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::{HeadEvent, ItemEvent};
+use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
@@ -12,8 +12,8 @@ type RollbackFunction = Box<dyn FnOnce(&mut InMemoryStorage) -> Result<(), Stora
 
 pub struct InMemoryStorage {
     stamp: Stamp,
-    head_events: Vec<HeadEvent>,
-    item_events: Vec<ItemEvent>,
+    head_operations: Vec<HeadOperation>,
+    item_operations: Vec<ItemOperation>,
     in_transaction: bool,
     rollback_stack: Vec<RollbackFunction>,
 }
@@ -22,8 +22,8 @@ impl InMemoryStorage {
     pub fn new() -> Self {
         Self {
             stamp: Stamp::seed(),
-            head_events: Vec::new(),
-            item_events: Vec::new(),
+            head_operations: Vec::new(),
+            item_operations: Vec::new(),
             in_transaction: false,
             rollback_stack: Vec::new(),
         }
@@ -31,13 +31,13 @@ impl InMemoryStorage {
 
     pub fn init(
         stamp: Stamp,
-        head_events: Vec<HeadEvent>,
-        item_events: Vec<ItemEvent>,
+        head_operations: Vec<HeadOperation>,
+        item_operations: Vec<ItemOperation>,
     ) -> Self {
         Self {
             stamp: stamp,
-            head_events: head_events,
-            item_events: item_events,
+            head_operations,
+            item_operations,
             in_transaction: false,
             rollback_stack: Vec::new(),
         }
@@ -94,14 +94,14 @@ impl Store for InMemoryStorage {
         Ok(self.stamp.clone())
     }
 
-    fn save_head_event(&mut self, event: &HeadEvent) -> Result<(), StorageError> {
-        let index = self.head_events.binary_search_by_key(event.id(), |h| *h.id())
+    fn save_head_operation(&mut self, operation: &HeadOperation) -> Result<(), StorageError> {
+        let index = self.head_operations.binary_search_by_key(operation.id(), |h| *h.id())
             .unwrap_or_else(|i| i);
-        self.head_events.insert(index, event.clone());
+        self.head_operations.insert(index, operation.clone());
 
         if self.in_transaction {
             self.rollback_stack.push(Box::new(move |store: &mut InMemoryStorage| {
-                store.head_events.remove(index);
+                store.head_operations.remove(index);
                 Ok(())
             }));
         }
@@ -109,30 +109,30 @@ impl Store for InMemoryStorage {
         Ok(())
     }
 
-    fn load_all_head_events(&self) -> Result<Vec<HeadEvent>, StorageError> {
-        Ok(self.head_events.clone())
+    fn load_all_head_operations(&self) -> Result<Vec<HeadOperation>, StorageError> {
+        Ok(self.head_operations.clone())
     }
 
-    fn delete_head_event(&mut self, id: &Uuid) -> Result<HeadEvent, StorageError> {
-        let index = match self.head_events.binary_search_by_key(id, |h| *h.id()) {
+    fn delete_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
+        let index = match self.head_operations.binary_search_by_key(id, |h| *h.id()) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
-                format!("storage does not contain a head event with id '{id}'")
+                format!("storage does not contain a head operation with id '{id}'")
             )),
         };
 
-        let head_event = self.head_events.remove(index);
-        Ok(head_event)
+        let head_operation = self.head_operations.remove(index);
+        Ok(head_operation)
     }
 
-    fn save_item_event(&mut self, event: &ItemEvent) -> Result<(), StorageError> {
-        let index = self.item_events.binary_search_by_key(event.id(), |h| *h.id())
+    fn save_item_operation(&mut self, operation: &ItemOperation) -> Result<(), StorageError> {
+        let index = self.item_operations.binary_search_by_key(operation.id(), |h| *h.id())
             .unwrap_or_else(|i| i);
-        self.item_events.insert(index, event.clone());
+        self.item_operations.insert(index, operation.clone());
 
         if self.in_transaction {
             self.rollback_stack.push(Box::new(move |store: &mut InMemoryStorage| {
-                store.item_events.remove(index);
+                store.item_operations.remove(index);
                 Ok(())
             }));
         }
@@ -140,19 +140,19 @@ impl Store for InMemoryStorage {
         Ok(())
     }
 
-    fn load_all_item_events(&self) -> Result<Vec<ItemEvent>, StorageError> {
-        Ok(self.item_events.clone())
+    fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError> {
+        Ok(self.item_operations.clone())
     }
 
-    fn delete_item_event(&mut self, id: &Uuid) -> Result<ItemEvent, StorageError> {
-        let index = match self.item_events.binary_search_by_key(id, |i| *i.id()) {
+    fn delete_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
+        let index = match self.item_operations.binary_search_by_key(id, |i| *i.id()) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
-                format!("storage does not contain a item event with id '{id}'")
+                format!("storage does not contain a item operation with id '{id}'")
             )),
         };
 
-        let item_event = self.item_events.remove(index);
-        Ok(item_event)
+        let item_operation = self.item_operations.remove(index);
+        Ok(item_operation)
     }
 }
