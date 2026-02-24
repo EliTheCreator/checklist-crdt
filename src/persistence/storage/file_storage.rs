@@ -11,11 +11,19 @@ use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
 
-type RollbackFunction = Box<dyn FnOnce(&mut FileStorage) -> Result<(), StorageError>>;
-
 struct OperationLogFile {
     file: File,
     operation_positions: Vec<(u64, Uuid)>,
+}
+
+
+enum RollbackFunction {
+    SaveHeadOperation(HeadOperation),
+    EraseHeadOperation(Uuid),
+    SaveItemOperation(ItemOperation),
+    EraseItemOperation(Uuid),
+    SaveStamp(Stamp),
+    EraseStamp,
 }
 
 
@@ -137,12 +145,29 @@ impl Store for FileStorage {
             return  Ok(false);
         }
 
+        let total_steps = self.rollback_stack.len();
+        let mut current_step: usize = 0;
         while let Some(rollback_function) = self.rollback_stack.pop() {
-            if let Err(e) = rollback_function(self) {
+            current_step += 1;
+
+            use RollbackFunction::*;
+            let rollback_result = match rollback_function {
+                SaveHeadOperation(operation) => self.save_head_operation(operation),
+                EraseHeadOperation(id) => self.erase_head_operation(&id).map(|_| ()),
+                SaveItemOperation(operation) => self.save_item_operation(operation),
+                EraseItemOperation(id) => self.erase_item_operation(&id).map(|_| ()),
+                SaveStamp(stamp) => self.save_stamp(&stamp),
+                EraseStamp => {
+                    self.stamp_file.set_len(0)
+                        .or_raise(|| StorageError::backend_specific("failed to truncate stamp file"))
+                },
+            };
+
+            if let Err(e) = rollback_result {
                 self.rollback_stack.clear();
-                return Result::Err(e.raise(
-                    StorageError::transaction_rollback_partial("failed to rollback all transaction steps")
-                ));
+                bail!(e.raise(StorageError::transaction_rollback_partial(format!(
+                    "failed to rollback step {current_step} of {total_steps} of the transaction"
+                ))));
             }
         }
 
@@ -165,13 +190,10 @@ impl Store for FileStorage {
                 .len();
 
             if file_size == 0 {
-                self.rollback_stack.push(Box::new(move |store: &mut FileStorage| {
-                    store.stamp_file.set_len(0)
-                        .or_raise(|| StorageError::backend_specific("failed to truncate stamp file"))
-                }));
+                self.rollback_stack.push(RollbackFunction::EraseStamp);
             } else {
                 let current_stamp = self.load_stamp()?;
-                self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_stamp(&current_stamp)));
+                self.rollback_stack.push(RollbackFunction::SaveStamp(current_stamp));
             }
         }
 
@@ -257,9 +279,7 @@ impl Store for FileStorage {
         }
 
         if self.in_transaction {
-            self.rollback_stack.push(Box::new(move |store: &mut FileStorage|
-                store.erase_head_operation(&id).map(|_| ())
-            ));
+            self.rollback_stack.push(RollbackFunction::EraseHeadOperation(id));
         }
 
         Ok(())
@@ -327,8 +347,7 @@ impl Store for FileStorage {
         };
 
         if self.in_transaction {
-            let cloned_head_operation = head_operation.clone();
-            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_head_operation(cloned_head_operation)));
+            self.rollback_stack.push(RollbackFunction::SaveHeadOperation(head_operation.clone()));
         }
 
         Ok(head_operation)
@@ -384,9 +403,7 @@ impl Store for FileStorage {
         }
 
         if self.in_transaction {
-            self.rollback_stack.push(Box::new(move |store: &mut FileStorage|
-                store.erase_item_operation(&id).map(|_| ())
-            ));
+            self.rollback_stack.push(RollbackFunction::EraseItemOperation(id));
         }
 
         Ok(())
@@ -454,8 +471,7 @@ impl Store for FileStorage {
         };
 
         if self.in_transaction {
-            let cloned_item_operation = item_operation.clone();
-            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_item_operation(cloned_item_operation)));
+            self.rollback_stack.push(RollbackFunction::SaveItemOperation(item_operation.clone()));
         }
 
         Ok(item_operation)
