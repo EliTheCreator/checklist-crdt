@@ -6,64 +6,67 @@ use uuid::Uuid;
 pub enum HeadOperation {
     Creation {
         id: Uuid,
-        itc_event: EventTree,
+        history: EventTree,
         template_id: Option<Uuid>,
         name: String,
         description: Option<String>,
     },
     NameUpdate {
         id: Uuid,
-        itc_event: EventTree,
+        history: EventTree,
         head_id: Uuid,
         name: String,
     },
     DescriptionUpdate {
         id: Uuid,
-        itc_event: EventTree,
+        history: EventTree,
         head_id: Uuid,
         description: Option<String>,
     },
     CompletedUpdate {
         id: Uuid,
-        itc_event: EventTree,
+        history: EventTree,
         head_id: Uuid,
         completed: bool,
     },
     Deletion {
         id: Uuid,
-        itc_event: EventTree,
+        history: EventTree,
         head_id: Uuid,
     },
 }
 
 impl HeadOperation {
     pub fn id(&self) -> &Uuid {
+        use HeadOperation::*;
         match self {
-            HeadOperation::Creation { id, .. } => id,
-            HeadOperation::NameUpdate { id, .. } => id,
-            HeadOperation::DescriptionUpdate { id, .. } => id,
-            HeadOperation::CompletedUpdate { id, .. } => id,
-            HeadOperation::Deletion { id, .. } => id,
+            Creation { id, .. } => id,
+            NameUpdate { id, .. } => id,
+            DescriptionUpdate { id, .. } => id,
+            CompletedUpdate { id, .. } => id,
+            Deletion { id, .. } => id,
         }
     }
 
-    pub fn itc_event(&self) -> &EventTree {
+    pub fn history(&self) -> &EventTree {
+        use HeadOperation::*;
         match self {
-            HeadOperation::Creation { itc_event, .. } => itc_event,
-            HeadOperation::NameUpdate { itc_event, .. } => itc_event,
-            HeadOperation::DescriptionUpdate { itc_event, .. } => itc_event,
-            HeadOperation::CompletedUpdate { itc_event, .. } => itc_event,
-            HeadOperation::Deletion { itc_event, .. } => itc_event,
+            Creation { history, .. } => history,
+            NameUpdate { history, .. } => history,
+            DescriptionUpdate { history, .. } => history,
+            CompletedUpdate { history, .. } => history,
+            Deletion { history, .. } => history,
         }
     }
 
     pub fn head_id(&self) -> &Uuid {
+        use HeadOperation::*;
         match self {
-            HeadOperation::Creation { id, .. } => id,
-            HeadOperation::NameUpdate { head_id, .. } => head_id,
-            HeadOperation::DescriptionUpdate { head_id, .. } => head_id,
-            HeadOperation::CompletedUpdate { head_id, .. } => head_id,
-            HeadOperation::Deletion { head_id, .. } => head_id,
+            Creation { id, .. } => id,
+            NameUpdate { head_id, .. } => head_id,
+            DescriptionUpdate { head_id, .. } => head_id,
+            CompletedUpdate { head_id, .. } => head_id,
+            Deletion { head_id, .. } => head_id,
         }
     }
 }

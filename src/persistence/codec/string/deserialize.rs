@@ -1,4 +1,7 @@
-use std::{error::Error, fmt::Display, num::ParseIntError, str::{ParseBoolError, Split}};
+use std::error::Error;
+use std::fmt::Display;
+use std::num::ParseIntError;
+use std::str::{ParseBoolError, Split};
 
 use itc::{EventTree, ascii_coding};
 use loro_fractional_index::FractionalIndex;
@@ -142,7 +145,7 @@ impl Parser {
             .map_err(|e| ParserError::uuid_parse_failure("failed to decode Uuid", e))
     }
 
-    fn parse_itc_event(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<EventTree, ParserError> {
+    fn parse_itc_event_tree(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<EventTree, ParserError> {
         Self::get_next_str(iter, expected_value)?
             .parse::<EventTree>()
             .map_err(|e| ParserError::itc_parse_failure("failed to decode EventTree", e))
@@ -151,102 +154,106 @@ impl Parser {
     fn parse_bool(iter: &mut Split<'_, &str>, expected_value: &str) -> Result<bool, ParserError> {
         Self::get_next_str(iter, expected_value)?
             .parse::<bool>()
-            .map_err(|e| ParserError::bool_parse_failure("failed to decode EventTree", e))
+            .map_err(|e| ParserError::bool_parse_failure("failed to decode bool", e))
     }
 
     fn parse_operation_meta(iter: &mut Split<'_, &str>) -> Result<(Uuid, EventTree), ParserError> {
         let id = Self::parse_uuid(iter, "id")?;
-        let itc_event = Self::parse_itc_event(iter, "itc event")?;
+        let history = Self::parse_itc_event_tree(iter, "itc event tree")?;
 
-        Ok((id, itc_event))
+        Ok((id, history))
     }
 
     fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let template_id = Self::parse_optional_uuid(iter, "template id")?;
 
         let name = Self::get_next_string(iter, "name")?;
         let description = Some(Self::get_next_string(iter, "description")?)
             .filter(|s| s.is_empty());
 
-        Ok(HeadOperation::Creation { id, itc_event, template_id, name, description })
+        Ok(HeadOperation::Creation { id, history, template_id, name, description })
     }
 
     fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
+
         let name = Self::get_next_string(iter, "name")?;
 
-        Ok(HeadOperation::NameUpdate { id, itc_event, head_id, name })
+        Ok(HeadOperation::NameUpdate { id, history, head_id, name })
     }
 
     fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
+
         let description = Some(Self::get_next_string(iter, "description")?)
             .filter(|s| s.is_empty());
 
-        Ok(HeadOperation::DescriptionUpdate { id, itc_event, head_id, description })
+        Ok(HeadOperation::DescriptionUpdate { id, history, head_id, description })
     }
 
     fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
+
         let completed = Self::parse_bool(iter, "completed")?;
 
-        Ok(HeadOperation::CompletedUpdate { id, itc_event, head_id, completed })
+        Ok(HeadOperation::CompletedUpdate { id, history, head_id, completed })
     }
 
     fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
 
-        Ok(HeadOperation::Deletion { id, itc_event, head_id })
+        Ok(HeadOperation::Deletion { id, history, head_id })
     }
 
     fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
 
         let name = Self::get_next_string(iter, "name")?;
         let position = Self::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
-        Ok(ItemOperation::Creation { id, itc_event, head_id, name, position })
+        Ok(ItemOperation::Creation { id, history, head_id, name, position })
     }
 
     fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
 
         let name = Self::get_next_string(iter, "name")?;
 
-        Ok(ItemOperation::NameUpdate { id, itc_event, item_id, name })
+        Ok(ItemOperation::NameUpdate { id, history, item_id, name })
     }
 
     fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
 
         let position = Self::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
-        Ok(ItemOperation::PositionUpdate { id, itc_event, item_id, position })
+        Ok(ItemOperation::PositionUpdate { id, history, item_id, position })
     }
 
     fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
+
         let checked = Self::parse_bool(iter, "checked")?;
 
-        Ok(ItemOperation::CheckedUpdate { id, itc_event, item_id, checked })
+        Ok(ItemOperation::CheckedUpdate { id, history, item_id, checked })
     }
 
     fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
-        let (id, itc_event) = Self::parse_operation_meta(iter)?;
+        let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
 
-        Ok(ItemOperation::Deletion { id, itc_event, item_id })
+        Ok(ItemOperation::Deletion { id, history, item_id })
     }
 }
 

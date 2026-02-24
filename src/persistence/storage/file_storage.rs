@@ -497,7 +497,7 @@ mod tests {
 
         let head = HeadOperation::Creation {
             id: uuid::Uuid::now_v7(),
-            itc_event: itc::EventTree::zero(),
+            history: itc::EventTree::zero(),
             template_id: Some(uuid::Uuid::new_v4()),
             name: "test test".into(),
             description: Some("this is a description".into())

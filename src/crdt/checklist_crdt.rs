@@ -117,7 +117,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let id = Uuid::now_v7();
         let operation = HeadOperation::Creation {
             id: id.clone(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             template_id: template_id,
             name: name,
             description: description,
@@ -138,7 +138,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let operation = HeadOperation::NameUpdate {
             id: Uuid::now_v7(),
             head_id: head_id.clone(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             name: name,
         };
 
@@ -154,7 +154,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let operation = HeadOperation::DescriptionUpdate {
             id: Uuid::now_v7(),
             head_id: head_id.clone(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             description: description,
         };
 
@@ -170,7 +170,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let operation = HeadOperation::CompletedUpdate {
             id: Uuid::now_v7(),
             head_id: head_id.clone(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             completed: completed,
         };
 
@@ -184,7 +184,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let stamp = self.itc_stamp.event();
         let operation = HeadOperation::Deletion {
             id: Uuid::now_v7(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             head_id: head_id.clone(),
         };
 
@@ -218,7 +218,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let id = Uuid::now_v7();
         let operation = ItemOperation::Creation {
             id: id.clone(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             head_id: head_id,
             name: name,
             position: position,
@@ -238,7 +238,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let stamp = self.itc_stamp.event();
         let operation = ItemOperation::NameUpdate {
             id: Uuid::now_v7(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             item_id: item_id.clone(),
             name: name,
         };
@@ -254,7 +254,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let stamp = self.itc_stamp.event();
         let operation = ItemOperation::PositionUpdate {
             id: Uuid::now_v7(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             item_id: item_id.clone(),
             position: position,
         };
@@ -270,7 +270,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let stamp = self.itc_stamp.event();
         let operation = ItemOperation::CheckedUpdate {
             id: Uuid::now_v7(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             item_id: item_id.clone(),
             checked: checked,
         };
@@ -285,7 +285,7 @@ impl<S: Store> ChecklistCrdt<S> {
         let stamp = self.itc_stamp.event();
         let operation: ItemOperation = ItemOperation::Deletion {
             id: Uuid::now_v7(),
-            itc_event: stamp.event_tree(),
+            history: stamp.history(),
             item_id: item_id.clone(),
         };
 
@@ -307,7 +307,7 @@ impl<S: Store> ChecklistCrdt<S> {
 
         let mut trimable_operations = Vec::new();
         let mut deleted_operations = Vec::new();
-        let deletion_discriminant = discriminant(&HeadOperation::Deletion { id: Uuid::default(), head_id: Uuid::default(), itc_event: EventTree::zero() });
+        let deletion_discriminant = discriminant(&HeadOperation::Deletion { id: Uuid::default(), head_id: Uuid::default(), history: EventTree::zero() });
         for group in grouped_operations.into_values() {
             let discriminant_bins = group.into_iter()
                 .fold(HashMap::new(), |mut m: HashMap<_,Vec<&HeadOperation>>, e| {
@@ -434,7 +434,7 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
     fn get_delta_since(&self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
         let mut head_operations = self.get_all_checklist_heads()?;
         head_operations.retain(|head| {
-            match history.partial_cmp(head.itc_event()) {
+            match history.partial_cmp(head.history()) {
                 Some(ordering) => ordering == Ordering::Less,
                 None => true,
             }
@@ -442,7 +442,7 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
 
         let mut item_operations = self.get_all_checklist_items()?;
         item_operations.retain(|item| {
-            match history.partial_cmp(item.itc_event()) {
+            match history.partial_cmp(item.history()) {
                 Some(ordering) => ordering == Ordering::Less,
                 None => true,
             }
