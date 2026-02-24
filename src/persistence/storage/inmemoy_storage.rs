@@ -94,7 +94,7 @@ impl Store for InMemoryStorage {
         Ok(self.stamp.clone())
     }
 
-    fn save_head_operation(&mut self, operation: &HeadOperation) -> Result<(), StorageError> {
+    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
         let index = self.head_operations.binary_search_by_key(operation.id(), |h| *h.id())
             .unwrap_or_else(|i| i);
         self.head_operations.insert(index, operation.clone());
@@ -125,7 +125,7 @@ impl Store for InMemoryStorage {
         Ok(head_operation)
     }
 
-    fn save_item_operation(&mut self, operation: &ItemOperation) -> Result<(), StorageError> {
+    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError> {
         let index = self.item_operations.binary_search_by_key(operation.id(), |h| *h.id())
             .unwrap_or_else(|i| i);
         self.item_operations.insert(index, operation.clone());

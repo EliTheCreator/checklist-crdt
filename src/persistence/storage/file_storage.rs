@@ -12,7 +12,7 @@ use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
 
-type RollbackFunction = Box<dyn FnMut(&mut FileStorage) -> Result<(), StorageError>>;
+type RollbackFunction = Box<dyn FnOnce(&mut FileStorage) -> Result<(), StorageError>>;
 
 struct OperationLogFile {
     file: File,
@@ -153,7 +153,7 @@ impl FileStorage {
         Ok((id, itc_event))
     }
 
-    fn serialize_head_creation(&mut self, operation: &HeadOperation) -> Option<String> {
+    fn serialize_head_creation(&mut self, operation: HeadOperation) -> Option<String> {
         if let HeadOperation::Creation { id, itc_event, template_id, name, description } = operation {
             let description = description.clone().unwrap_or(String::new());
             Some(format!(
@@ -182,7 +182,7 @@ impl FileStorage {
         Ok(HeadOperation::Creation { id, itc_event, template_id, name, description })
     }
 
-    fn serialize_head_name_update(&mut self, operation: &HeadOperation) -> Option<String> {
+    fn serialize_head_name_update(&mut self, operation: HeadOperation) -> Option<String> {
         if let HeadOperation::NameUpdate { id, itc_event, head_id, name } = operation {
             Some(format!(
                 "NameUpdate {} {} {} {}:{}\n",
@@ -205,7 +205,7 @@ impl FileStorage {
         Ok(HeadOperation::NameUpdate { id, itc_event, head_id, name })
     }
 
-    fn serialize_head_description_update(&mut self, operation: &HeadOperation) -> Option<String> {
+    fn serialize_head_description_update(&mut self, operation: HeadOperation) -> Option<String> {
         if let HeadOperation::DescriptionUpdate { id, itc_event, head_id, description } = operation {
             let description = description.clone().unwrap_or(String::new());
             Some(format!(
@@ -230,7 +230,7 @@ impl FileStorage {
         Ok(HeadOperation::DescriptionUpdate { id, itc_event, head_id, description })
     }
 
-    fn serialize_head_completed_update(&mut self, operation: &HeadOperation) -> Option<String> {
+    fn serialize_head_completed_update(&mut self, operation: HeadOperation) -> Option<String> {
         if let HeadOperation::CompletedUpdate { id, itc_event, head_id, completed } = operation {
             Some(format!(
                 "CompletedUpdate {} {} {} {}\n",
@@ -252,7 +252,7 @@ impl FileStorage {
         Ok(HeadOperation::CompletedUpdate { id, itc_event, head_id, completed })
     }
 
-    fn serialize_head_deletion(&mut self, operation: &HeadOperation) -> Option<String> {
+    fn serialize_head_deletion(&mut self, operation: HeadOperation) -> Option<String> {
         if let HeadOperation::Deletion { id, head_id, itc_event } = operation {
             Some(format!(
                 "Deletion {} {} {}\n",
@@ -301,7 +301,7 @@ impl FileStorage {
             .or_raise(|| StorageError::data_decode("unable to parse all lines"))
     }
 
-    fn serialize_item_creation(&mut self, operation: &ItemOperation) -> Option<String> {
+    fn serialize_item_creation(&mut self, operation: ItemOperation) -> Option<String> {
         if let ItemOperation::Creation { id, itc_event, head_id, name, position } = operation {
             Some(format!(
                 "Creation {} {} {} {}:{} {}\n",
@@ -328,7 +328,7 @@ impl FileStorage {
         Ok(ItemOperation::Creation { id, itc_event, head_id, name, position })
     }
 
-    fn serialize_item_name_update(&mut self, operation: &ItemOperation) -> Option<String> {
+    fn serialize_item_name_update(&mut self, operation: ItemOperation) -> Option<String> {
         if let ItemOperation::NameUpdate { id, itc_event, item_id, name } = operation {
             Some(format!(
                 "NameUpdate {} {} {} {}:{}\n",
@@ -352,7 +352,7 @@ impl FileStorage {
         Ok(ItemOperation::NameUpdate { id, itc_event, item_id, name })
     }
 
-    fn serialize_item_position_update(&mut self, operation: &ItemOperation) -> Option<String> {
+    fn serialize_item_position_update(&mut self, operation: ItemOperation) -> Option<String> {
         if let ItemOperation::PositionUpdate { id, itc_event, item_id, position } = operation {
             Some(format!(
                 "PositionUpdate {} {} {} {}\n",
@@ -376,7 +376,7 @@ impl FileStorage {
         Ok(ItemOperation::PositionUpdate { id, itc_event, item_id, position })
     }
 
-    fn serialize_item_checked_update(&mut self, operation: &ItemOperation) -> Option<String> {
+    fn serialize_item_checked_update(&mut self, operation: ItemOperation) -> Option<String> {
         if let ItemOperation::CheckedUpdate { id, itc_event, item_id, checked } = operation {
             Some(format!(
                 "CheckedUpdate {} {} {} {}\n",
@@ -398,7 +398,7 @@ impl FileStorage {
         Ok(ItemOperation::CheckedUpdate { id, itc_event, item_id, checked })
     }
 
-    fn serialize_item_deletion(&mut self, operation: &ItemOperation) -> Option<String> {
+    fn serialize_item_deletion(&mut self, operation: ItemOperation) -> Option<String> {
         if let ItemOperation::Deletion { id, itc_event, item_id } = operation {
             Some(format!(
                 "Deletion {} {} {}\n",
@@ -531,8 +531,9 @@ impl Store for FileStorage {
         Ok(stamp)
     }
 
-    fn save_head_operation(&mut self, operation: &HeadOperation) -> Result<(), StorageError> {
-        let (line, id) = {
+    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
+        let id = operation.id().clone();
+        let line = {
             use HeadOperation::*;
             match operation {
                 Creation { .. } => self.serialize_head_creation(operation),
@@ -542,8 +543,7 @@ impl Store for FileStorage {
                 Deletion { .. } => self.serialize_head_deletion(operation),
             }
         }
-        .and_then(|s| Some((s, operation.id().clone())))
-        .ok_or_else(|| StorageError::data_encode(format!("unable to serialize head operation with id {}", operation.id())))?;
+        .ok_or_else(|| StorageError::data_encode(format!("unable to serialize head operation with id {}", id)))?;
 
         let file = &mut self.head_log_file.file;
         let operation_positions = &mut self.head_log_file.operation_positions;
@@ -662,14 +662,15 @@ impl Store for FileStorage {
 
         if self.in_transaction {
             let cloned_head_operation = head_operation.clone();
-            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_head_operation(&cloned_head_operation)));
+            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_head_operation(cloned_head_operation)));
         }
 
         Ok(head_operation)
     }
 
-    fn save_item_operation(&mut self, operation: &ItemOperation) -> Result<(), StorageError> {
-        let (line, id) = {
+    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError> {
+        let id = operation.id().clone();
+        let line = {
             use ItemOperation::*;
             match operation {
                 Creation { .. } =>  self.serialize_item_creation(operation),
@@ -679,8 +680,7 @@ impl Store for FileStorage {
                 Deletion { .. } =>  self.serialize_item_deletion(operation),
             }
         }
-        .and_then(|s| Some((s, operation.id().clone())))
-        .ok_or_else(|| StorageError::data_encode(format!("unable to serialize item operation with id {}", operation.id())))?;
+        .ok_or_else(|| StorageError::data_encode(format!("unable to serialize item operation with id {}", id)))?;
 
         let file = &mut self.item_log_file.file;
         let operation_positions = &mut self.item_log_file.operation_positions;
@@ -799,7 +799,7 @@ impl Store for FileStorage {
 
         if self.in_transaction {
             let cloned_item_operation = item_operation.clone();
-            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_item_operation(&cloned_item_operation)));
+            self.rollback_stack.push(Box::new(move |store: &mut FileStorage| store.save_item_operation(cloned_item_operation)));
         }
 
         Ok(item_operation)
@@ -831,6 +831,6 @@ mod tests {
             description: Some("this is a description".into())
         };
 
-        file_store.save_head_operation(&head).unwrap();
+        file_store.save_head_operation(head).unwrap();
     }
 }

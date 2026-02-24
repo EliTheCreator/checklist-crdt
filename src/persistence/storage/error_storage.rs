@@ -30,7 +30,7 @@ impl Store for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_head_operation(&mut self, _: &HeadOperation) -> Result<(), StorageError> {
+    fn save_head_operation(&mut self, _: HeadOperation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
@@ -42,7 +42,7 @@ impl Store for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_item_operation(&mut self, _: &ItemOperation) -> Result<(), StorageError> {
+    fn save_item_operation(&mut self, _: ItemOperation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 

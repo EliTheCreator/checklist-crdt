@@ -116,7 +116,7 @@ impl<S: Store> ChecklistCrdt<S> {
     }
 
     fn save_checklist_head_operation(&mut self, operation: HeadOperation) -> Result<(), CrdtError> {
-        self.storage.save_head_operation(&operation).map_err(|e|
+        self.storage.save_head_operation(operation).map_err(|e|
             self.abort_transaction(e, "crdt unable to store head operation")
         )
     }
@@ -217,7 +217,7 @@ impl<S: Store> ChecklistCrdt<S> {
     }
 
     fn save_checklist_item_operation(&mut self, operation: ItemOperation) -> Result<(), CrdtError> {
-        self.storage.save_item_operation(&operation).map_err(|e|
+        self.storage.save_item_operation(operation).map_err(|e|
             self.abort_transaction(e, "crdt unable to store item operation")
         )
     }
