@@ -7,6 +7,7 @@ use itc::{EventTree, IdTree, IntervalTreeClock, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
+use crate::crdt::crdt::{Crdt, OperationDelta, ReplicaState};
 use crate::crdt::crdt_error::CrdtError;
 use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::{StorageError, ErrorKind};
@@ -37,39 +38,18 @@ macro_rules! transaction {
 }
 
 
-pub struct OperationDelta {
-    from_itc_event: EventTree,
-    to_itc_event: EventTree,
-    head_operations: Vec<HeadOperation>,
-    item_operations: Vec<ItemOperation>,
-}
-
-impl OperationDelta {
-    pub fn new(
-        from_itc_event: EventTree,
-        to_itc_event: EventTree,
-        head_operations: Vec<HeadOperation>,
-        item_operations: Vec<ItemOperation>,
-    ) -> Self {
-        Self { from_itc_event, to_itc_event, head_operations, item_operations }
-    }
-}
-
-
 #[derive(Debug, PartialEq)]
-pub struct Peer {
-    stamp: Stamp,
+pub struct ChecklistOperations {
     head_operations: Vec<HeadOperation>,
     item_operations: Vec<ItemOperation>,
 }
 
-impl Peer {
+impl ChecklistOperations {
     pub fn new(
-        stamp: Stamp,
         head_operations: Vec<HeadOperation>,
         item_operations: Vec<ItemOperation>,
     ) -> Self {
-        Self { stamp, head_operations, item_operations }
+        Self { head_operations, item_operations }
     }
 }
 
