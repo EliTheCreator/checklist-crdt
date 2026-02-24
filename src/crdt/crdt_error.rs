@@ -1,12 +1,13 @@
-
 use core::error::Error;
 use core::fmt::{Display, Formatter, Result};
+
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     Recovered,
     Recoverable,
     Fatal,
+    CausalGap,
 }
 
 
@@ -32,6 +33,10 @@ impl CrdtError {
     pub fn fatal(message: impl Into<String>) -> Self {
         Self { kind: ErrorKind::Recoverable, message: message.into() }
     }
+
+    pub fn causal_gap(message: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::CausalGap, message: message.into() }
+    }
 }
 
 impl Display for CrdtError {
@@ -41,6 +46,7 @@ impl Display for CrdtError {
             Recovered => write!(f, "crdt recovered error: {}", self.message),
             Recoverable => write!(f, "crdt recoverable error: {}", self.message),
             Fatal => write!(f, "crdt fatal error: {}", self.message),
+            CausalGap => write!(f, "crdt causal gap error: {}", self.message),
         }
     }
 }

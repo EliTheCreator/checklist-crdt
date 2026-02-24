@@ -33,7 +33,7 @@ macro_rules! transaction {
 
         $this.itc_stamp = $stamp;
 
-        Ok(result)
+        exn::Ok(result)
     }};
 }
 
@@ -297,58 +297,6 @@ impl<S: Store> ChecklistCrdt<S> {
             .or_raise(|| CrdtError::recovered("crdt unable to load all item operations"))
     }
 
-    pub fn get_operation_delta(&self, peer_operation: EventTree) -> Result<OperationDelta, CrdtError> {
-        let mut head_operations = self.get_all_checklist_heads()?;
-        head_operations.retain(|head| {
-            match peer_operation.partial_cmp(head.itc_event()) {
-                Some(ordering) => ordering == Ordering::Less,
-                None => true,
-            }
-        });
-
-        let mut item_operations = self.get_all_checklist_items()?;
-        item_operations.retain(|item| {
-            match peer_operation.partial_cmp(item.itc_event()) {
-                Some(ordering) => ordering == Ordering::Less,
-                None => true,
-            }
-        });
-
-        let own_operation = self.itc_stamp.event_tree();
-
-        Ok(OperationDelta::new(peer_operation, own_operation, head_operations, item_operations))
-    }
-
-    pub fn apply_operation_delta(&mut self, delta: OperationDelta) -> Result<(), CrdtError> {
-        // if self.itc_stamp.event_tree() != delta.from_itc_event {
-        //     bail!(CrdtError::recovered(""));
-        // }
-
-        let peer_stamp = Stamp::new(IdTree::zero(), delta.to_itc_event.clone());
-        let stamp = self.itc_stamp.join(&peer_stamp).event();
-
-        transaction!(self, stamp, {
-            for operation in delta.head_operations {
-                self.save_checklist_head_operation(operation)?;
-            }
-
-            for operation in delta.item_operations {
-                self.save_checklist_item_operation(operation)?;
-            }
-
-            Ok(())
-        })
-    }
-
-    pub fn fork(&mut self) -> Result<Peer, CrdtError> {
-        let (stamp, peer_stamp) = self.itc_stamp.fork();
-        let head_operations = self.get_all_checklist_heads()?;
-        let item_operations = self.get_all_checklist_items()?;
-
-        let _: Result<(), CrdtError> = transaction!(self, stamp, { Ok(()) });
-        Ok(Peer::new(peer_stamp, head_operations, item_operations))
-    }
-
     fn find_trimable_head_operations(&self) -> Result<(Vec<Uuid>, HashSet<Uuid>), CrdtError> {
         let operations = self.get_all_checklist_heads()?;
         let grouped_operations = operations.iter()
@@ -482,6 +430,81 @@ impl<S: Store> ChecklistCrdt<S> {
     }
 }
 
+impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
+    fn get_delta_since(&self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
+        let mut head_operations = self.get_all_checklist_heads()?;
+        head_operations.retain(|head| {
+            match history.partial_cmp(head.itc_event()) {
+                Some(ordering) => ordering == Ordering::Less,
+                None => true,
+            }
+        });
+
+        let mut item_operations = self.get_all_checklist_items()?;
+        item_operations.retain(|item| {
+            match history.partial_cmp(item.itc_event()) {
+                Some(ordering) => ordering == Ordering::Less,
+                None => true,
+            }
+        });
+
+        let local_history = self.itc_stamp.history();
+
+        let operations = ChecklistOperations::new(head_operations, item_operations);
+        Ok(OperationDelta::new(history, local_history, operations))
+    }
+
+    fn apply_delta(&mut self, delta: OperationDelta<ChecklistOperations>) -> Result<(), CrdtError> {
+        if !delta.is_applicable_to(&self.itc_stamp.history()) {
+            bail!(CrdtError::causal_gap(concat!(
+                "causal gap between local and base history deteceted. this may lead to lost ",
+                "operations and to an invalid crdt state"
+            )))
+        }
+
+        let peer_stamp = Stamp::new(IdTree::zero(), delta.target_history.clone());
+        let stamp = self.itc_stamp.join(&peer_stamp).event();
+
+        transaction!(self, stamp, {
+            for operation in delta.operations.head_operations {
+                self.save_checklist_head_operation(operation)?;
+            }
+
+            for operation in delta.operations.item_operations {
+                self.save_checklist_item_operation(operation)?;
+            }
+
+            Ok(())
+        })
+    }
+
+    fn fork(&mut self) -> Result<ReplicaState<ChecklistOperations>, CrdtError> {
+        let (stamp, replica_stamp) = self.itc_stamp.fork();
+        let head_operations = self.get_all_checklist_heads()?;
+        let item_operations = self.get_all_checklist_items()?;
+
+        transaction!(self, stamp, { Ok(()) })?;
+        let operations = ChecklistOperations::new(head_operations, item_operations);
+        Ok(ReplicaState::new(replica_stamp, operations))
+    }
+
+    fn join(&mut self, replica_state: ReplicaState<ChecklistOperations>) -> Result<(), CrdtError> {
+        let stamp = self.itc_stamp.join(&replica_state.stamp);
+
+        transaction!(self, stamp, {
+            for operation in replica_state.operations.head_operations {
+                self.save_checklist_head_operation(operation)?;
+            }
+
+            for operation in replica_state.operations.item_operations {
+                self.save_checklist_item_operation(operation)?;
+            }
+
+            Ok(())
+        })
+    }
+}
+
 
 #[cfg(test)]
 mod test {
@@ -535,7 +558,11 @@ mod test {
 
         let peer_data = crdt_1.fork().unwrap();
         let mut crdt_2 = ChecklistCrdt::new(
-            InMemoryStorage::init(peer_data.stamp, peer_data.head_operations, peer_data.item_operations),
+            InMemoryStorage::init(
+                peer_data.stamp,
+                peer_data.operations.head_operations,
+                peer_data.operations.item_operations
+            ),
         ).unwrap();
 
         crdt_1.update_checklist_head_name(&head_id, "B".into()).unwrap();
@@ -546,11 +573,11 @@ mod test {
         crdt_2.update_checklist_item_name(&second, "3.2".into()).unwrap();
         crdt_1.update_checklist_item_name(&second, "3.1".into()).unwrap();
 
-        let delta_1_2 = crdt_1.get_operation_delta(crdt_2.itc_stamp.event_tree()).unwrap();
-        let delta_2_1 = crdt_2.get_operation_delta(crdt_1.itc_stamp.event_tree()).unwrap();
+        let delta_1_2 = crdt_1.get_delta_since(crdt_2.itc_stamp.history()).unwrap();
+        let delta_2_1 = crdt_2.get_delta_since(crdt_1.itc_stamp.history()).unwrap();
 
-        crdt_1.apply_operation_delta(delta_2_1).unwrap();
-        crdt_2.apply_operation_delta(delta_1_2).unwrap();
+        crdt_1.apply_delta(delta_2_1).unwrap();
+        crdt_2.apply_delta(delta_1_2).unwrap();
 
         let mut peer_1 = crdt_1.fork().unwrap();
         peer_1.stamp = Stamp::seed();
