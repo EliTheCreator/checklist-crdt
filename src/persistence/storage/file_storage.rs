@@ -11,9 +11,37 @@ use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
 
+struct OperationMetadata {
+    offset: u64,
+    length: u64,
+    id: Uuid,
+    associated_id: Uuid,
+}
+
+impl OperationMetadata {
+    fn new (
+        offset: u64,
+        length: u64,
+        id: Uuid,
+        associated_id: Uuid,
+    ) -> Self {
+        Self { offset, length, id, associated_id }
+    }
+}
+
+
 struct OperationLogFile {
     file: File,
-    operation_positions: Vec<(u64, u64, Uuid, Uuid)>,
+    operation_positions: Vec<OperationMetadata>,
+}
+
+impl OperationLogFile {
+    fn new(
+        file: File,
+        operation_positions: Vec<OperationMetadata>,
+    ) -> Self {
+        Self { file, operation_positions }
+    }
 }
 
 
@@ -61,8 +89,8 @@ impl FileStorage {
             .map(|head| {
                 let old_offset = offset;
                 offset += head.0;
-                (old_offset, offset, head.1.id().clone(), head.1.head_id().clone())
-            }).collect::<Vec<(u64, u64, Uuid, Uuid)>>();
+                OperationMetadata::new (old_offset, head.0, head.1.id().clone(), head.1.head_id().clone())
+            }).collect::<Vec<OperationMetadata>>();
 
         let item_log_file = Self::open_file(item_log_path)
             .or_raise(|| StorageError::backend_open(format!("failed to open operation log file at {item_log_path}")))?;
@@ -73,13 +101,13 @@ impl FileStorage {
             .map(|item| {
                 let old_offset = offset;
                 offset += item.0;
-                (old_offset, offset, item.1.id().clone(), item.1.item_id().clone())
-            }).collect::<Vec<(u64, u64, Uuid, Uuid)>>();
+                OperationMetadata::new (old_offset, item.0, item.1.id().clone(), item.1.item_id().clone())
+            }).collect::<Vec<OperationMetadata>>();
 
         let file_store = FileStorage {
             stamp_file: stamp_file,
-            head_log_file: OperationLogFile { file: head_log_file, operation_positions: head_positions },
-            item_log_file: OperationLogFile { file: item_log_file, operation_positions: item_positions },
+            head_log_file: OperationLogFile::new(head_log_file,head_positions),
+            item_log_file: OperationLogFile::new(item_log_file, item_positions),
             in_transaction: false,
             rollback_stack: Vec::new(),
         };
@@ -87,11 +115,11 @@ impl FileStorage {
         Ok(file_store)
     }
 
-    fn load_line(file: &mut File, start: u64, end: u64) -> Result<String, StorageError> {
+    fn load_line(file: &mut File, start: u64, length: u64) -> Result<String, StorageError> {
         file.seek(SeekFrom::Start(start))
             .or_raise(|| StorageError::backend_specific("failed to seek position in file"))?;
 
-        let mut buffer = vec![0u8; (end-start) as usize];
+        let mut buffer = vec![0u8; length as usize];
         file.read_exact(&mut buffer)
             .or_raise(|| StorageError::backend_read("failed to read line from file"))?;
 
@@ -217,7 +245,7 @@ impl Store for FileStorage {
             .or_raise(|| StorageError::backend_specific("failed to truncate stamp file"))?;
 
         self.stamp_file.seek(SeekFrom::Start(0))
-            .or_raise(|| StorageError::backend_specific("failed to seek position in stamp operation file"))?;
+            .or_raise(|| StorageError::backend_specific("failed to seek position in stamp file"))?;
 
         self.stamp_file.write(stamp.to_string().as_bytes())
             .or_raise(|| StorageError::backend_write("failed to write stamp to file"))?;
@@ -234,7 +262,7 @@ impl Store for FileStorage {
         }
 
         self.stamp_file.seek(SeekFrom::Start(0))
-            .or_raise(|| StorageError::backend_specific("failed to seek position in stamp operation file"))?;
+            .or_raise(|| StorageError::backend_specific("failed to seek position in stamp file"))?;
 
         let mut stamp_buf = String::new();
         self.stamp_file.read_to_string(&mut stamp_buf)
@@ -253,19 +281,19 @@ impl Store for FileStorage {
         let file = &mut self.head_log_file.file;
         let operation_positions = &mut self.head_log_file.operation_positions;
 
-        let index = match operation_positions.binary_search_by_key(&id, |i| i.2) {
+        let index = match operation_positions.binary_search_by_key(&id, |i| i.id) {
             Ok(_) => bail!(StorageError::backend_specific(
                 format!("head operation with id '{id}' is already in file")
             )),
             Err(i) => i,
         };
 
-        let line_size = line.len() as u64;
         let start = index
             .checked_sub(1)
-            .map(|i| operation_positions[i].0)
+            .map(|i| operation_positions[i].offset + operation_positions[i].length)
             .unwrap_or(0);
-        let end = start+line_size;
+        let line_len = line.len() as u64;
+        let medadata = OperationMetadata::new(start, line_len, id.clone(), head_id);
 
         file.seek(SeekFrom::Start(start))
             .or_raise(|| StorageError::backend_specific("failed to seek position in head operation file"))?;
@@ -273,7 +301,7 @@ impl Store for FileStorage {
         if index == operation_positions.len() {
             file.write(line.as_bytes())
                 .or_raise(|| StorageError::backend_write(format!("failed to write head operation '{id}' to file")))?;
-            operation_positions.push((start, end, id.clone(), head_id));
+            operation_positions.push(medadata);
         } else {
             let mut remainder = String::new();
             file.read_to_string(&mut remainder)
@@ -290,9 +318,9 @@ impl Store for FileStorage {
 
             operation_positions.iter_mut()
                 .skip(index)
-                .for_each(|tuple| tuple.0 += line_size);
+                .for_each(|m| m.offset += line_len);
 
-            operation_positions.insert(index, (start, end, id.clone(), head_id));
+            operation_positions.insert(index, medadata);
         }
 
         if self.in_transaction {
@@ -311,9 +339,9 @@ impl Store for FileStorage {
 
     fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
         self.head_log_file.operation_positions.iter()
-            .filter(|tuple| tuple.3 == *head_id)
-            .map(|tuple| {
-                Self::load_line(&mut self.head_log_file.file, tuple.0, tuple.1)
+            .filter(|meta| meta.associated_id == *head_id)
+            .map(|meta| {
+                Self::load_line(&mut self.head_log_file.file, meta.offset, meta.length-1)
                     .and_then(|line| Self::load_head_operation(&line))
                     .and_then(|pair| Ok(pair.1))
             })
@@ -324,32 +352,27 @@ impl Store for FileStorage {
         let file = &mut self.head_log_file.file;
         let operation_positions = &mut self.head_log_file.operation_positions;
 
-        let index = match operation_positions.binary_search_by_key(id, |i| i.2) {
+        let index = match operation_positions.binary_search_by_key(id, |i| i.id) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
                 format!("unable to find position of head operation with id '{id}'")
             )),
         };
 
-        let start = index
-            .checked_sub(1)
-            .map(|i| operation_positions[i].0)
-            .unwrap_or(0);
-        let end = operation_positions.remove(index).0;
-        let line_size = end-start;
+        let meta = operation_positions.remove(index);
 
-        file.seek(SeekFrom::Start(start))
+        file.seek(SeekFrom::Start(meta.offset))
             .or_raise(|| StorageError::backend_specific("failed to seek position in head operation file"))?;
 
         let mut buffer = String::new();
         file.read_to_string(&mut buffer)
             .or_raise(|| StorageError::backend_read("failed to read head operation from file"))?;
 
-        let head_slice = buffer.get(0 .. (line_size-1) as usize)
+        let head_slice = buffer.get(0 .. (meta.length-1) as usize)
             .ok_or_raise(|| StorageError::backend_specific("failed to calculate indices for string split properly"))?;
 
         let remainder_slice = if index < operation_positions.len() {
-            let val = buffer.get(line_size as usize .. buffer.len())
+            let val = buffer.get((meta.offset + meta.length) as usize .. buffer.len())
                 .ok_or_raise(|| StorageError::backend_specific("failed to calculate indices for string split properly"))?;
             Some(val)
         } else {
@@ -360,10 +383,10 @@ impl Store for FileStorage {
             .or_raise(|| StorageError::backend_read("failed to read head operation from file"))?
             .1;
 
-        file.set_len(start)
+        file.set_len(meta.offset)
             .or_raise(|| StorageError::backend_specific("failed to truncate head operation file"))?;
 
-        file.seek(SeekFrom::Start(start))
+        file.seek(SeekFrom::Start(meta.offset))
             .or_raise(|| StorageError::backend_specific("failed to seek position in head operation file"))?;
 
         if let Some(remainder) = remainder_slice {
@@ -371,7 +394,7 @@ impl Store for FileStorage {
                 .or_raise(|| StorageError::backend_write("failed to write remainder to head operation file"))?;
             operation_positions.iter_mut()
                 .skip(index)
-                .for_each(|tuple| tuple.0 -= line_size);
+                .for_each(|m| m.offset -= meta.length);
         };
 
         if self.in_transaction {
@@ -389,19 +412,20 @@ impl Store for FileStorage {
         let file = &mut self.item_log_file.file;
         let operation_positions = &mut self.item_log_file.operation_positions;
 
-        let index = match operation_positions.binary_search_by_key(&id, |i| i.2) {
+        let index = match operation_positions.binary_search_by_key(&id, |i| i.id) {
             Ok(_) => bail!(StorageError::backend_specific(
                 format!("item operation with id '{id}' is already in file")
             )),
             Err(i) => i,
         };
 
-        let line_size = line.len() as u64;
         let start = index
             .checked_sub(1)
-            .map(|i| operation_positions[i].0)
+            .map(|i| operation_positions[i].offset + operation_positions[i].length)
             .unwrap_or(0);
-        let end = start+line_size;
+        let line_len = line.len() as u64;
+        let medadata = OperationMetadata::new(start, line_len, id.clone(), item_id);
+
 
         file.seek(SeekFrom::Start(start))
             .or_raise(|| StorageError::backend_specific("failed to seek position in item operation file"))?;
@@ -409,7 +433,7 @@ impl Store for FileStorage {
         if index == operation_positions.len() {
             file.write(line.as_bytes())
                 .or_raise(|| StorageError::backend_write(format!("failed to write item operation '{id}' to file")))?;
-            operation_positions.push((start, end, id.clone(), item_id));
+            operation_positions.push(medadata);
         } else {
             let mut remainder = String::new();
             file.read_to_string(&mut remainder)
@@ -426,9 +450,9 @@ impl Store for FileStorage {
 
             operation_positions.iter_mut()
                 .skip(index)
-                .for_each(|tuple| tuple.0 += line_size);
+                .for_each(|m| m.offset += line_len);
 
-            operation_positions.insert(index, (start, end, id.clone(), item_id));
+            operation_positions.insert(index, medadata);
         }
 
         if self.in_transaction {
@@ -447,9 +471,9 @@ impl Store for FileStorage {
 
     fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
         self.item_log_file.operation_positions.iter()
-            .filter(|tuple| tuple.3 == *item_id)
-            .map(|tuple| {
-                Self::load_line(&mut self.item_log_file.file, tuple.0, tuple.1)
+            .filter(|meta| meta.associated_id == *item_id)
+            .map(|meta| {
+                Self::load_line(&mut self.item_log_file.file, meta.offset, meta.length-1)
                     .and_then(|line| Self::load_item_operation(&line))
                     .and_then(|pair| Ok(pair.1))
             })
@@ -460,32 +484,27 @@ impl Store for FileStorage {
         let file = &mut self.item_log_file.file;
         let operation_positions = &mut self.item_log_file.operation_positions;
 
-        let index = match operation_positions.binary_search_by_key(id, |i| i.2) {
+        let index = match operation_positions.binary_search_by_key(id, |i| i.id) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
                 format!("unable to find position of item operation with id '{id}'")
             )),
         };
 
-        let start = index
-            .checked_sub(1)
-            .map(|i| operation_positions[i].0)
-            .unwrap_or(0);
-        let end = operation_positions.remove(index).0;
-        let line_size = end-start;
+        let meta = operation_positions.remove(index);
 
-        file.seek(SeekFrom::Start(start))
+        file.seek(SeekFrom::Start(meta.offset))
             .or_raise(|| StorageError::backend_specific("failed to seek position in item operation file"))?;
 
         let mut buffer = String::new();
         file.read_to_string(&mut buffer)
             .or_raise(|| StorageError::backend_read("failed to read item operation from file"))?;
 
-        let item_slice = buffer.get(0 .. (line_size-1) as usize)
+        let item_slice = buffer.get(0 .. (meta.length-1) as usize)
             .ok_or_raise(|| StorageError::backend_specific("failed to calculate indices for string split properly"))?;
 
         let remainder_slice = if index < operation_positions.len() {
-            let val = buffer.get(line_size as usize .. buffer.len())
+            let val = buffer.get((meta.offset + meta.length) as usize .. buffer.len())
                 .ok_or_raise(|| StorageError::backend_specific("failed to calculate indices for string split properly"))?;
             Some(val)
         } else {
@@ -496,10 +515,10 @@ impl Store for FileStorage {
             .or_raise(|| StorageError::backend_read("failed to read item operation from file"))?
             .1;
 
-        file.set_len(start)
+        file.set_len(meta.offset)
             .or_raise(|| StorageError::backend_specific("failed to truncate item operation file"))?;
 
-        file.seek(SeekFrom::Start(start))
+        file.seek(SeekFrom::Start(meta.offset))
             .or_raise(|| StorageError::backend_specific("failed to seek position in item operation file"))?;
 
         if let Some(remainder) = remainder_slice {
@@ -507,7 +526,7 @@ impl Store for FileStorage {
                 .or_raise(|| StorageError::backend_write("failed to write remainder to item operation file"))?;
             operation_positions.iter_mut()
                 .skip(index)
-                .for_each(|tuple| tuple.0 -= line_size);
+                .for_each(|m| m.offset -= meta.length);
         };
 
         if self.in_transaction {
