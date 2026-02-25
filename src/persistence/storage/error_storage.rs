@@ -38,6 +38,10 @@ impl Store for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
+    fn load_all_associated_head_operations(&mut self, _: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
     fn erase_head_operation(&mut self, _: &Uuid) -> Result<HeadOperation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
@@ -47,6 +51,10 @@ impl Store for ErrorStorage {
     }
 
     fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
+    fn load_all_associated_item_operations(&mut self, _: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 

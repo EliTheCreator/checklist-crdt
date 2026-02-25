@@ -113,6 +113,15 @@ impl Store for InMemoryStorage {
         Ok(self.head_operations.clone())
     }
 
+    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+        let heads = self.head_operations.iter()
+            .filter(|head| head.head_id() == head_id)
+            .map(|head| head.clone())
+            .collect();
+
+        Ok(heads)
+    }
+
     fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
         let index = match self.head_operations.binary_search_by_key(id, |h| *h.id()) {
             Ok(i) => i,
@@ -142,6 +151,15 @@ impl Store for InMemoryStorage {
 
     fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError> {
         Ok(self.item_operations.clone())
+    }
+
+    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
+        let items = self.item_operations.iter()
+            .filter(|item| item.item_id() == item_id)
+            .map(|item| item.clone())
+            .collect();
+
+        Ok(items)
     }
 
     fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
