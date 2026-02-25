@@ -138,8 +138,11 @@ impl FileStorage {
     }
 
     fn load_all_head_operations_with_length(file: &File) -> Result<Vec<(u64, HeadOperation)>, StorageError> {
-        BufReader::new(file)
-            .lines()
+        let mut file = BufReader::new(file);
+        file.seek(SeekFrom::Start(0))
+            .or_raise(|| StorageError::backend_specific("failed to seek position in head operation file"))?;
+
+        file.lines()
             .map(|line| {
                 match line {
                     Ok(l) => Self::load_head_operation(&l),
@@ -161,8 +164,11 @@ impl FileStorage {
     }
 
     fn load_all_item_operations_with_length(file: &File) -> Result<Vec<(u64, ItemOperation)>, StorageError> {
-        BufReader::new(file)
-            .lines()
+        let mut file = BufReader::new(file);
+        file.seek(SeekFrom::Start(0))
+            .or_raise(|| StorageError::backend_specific("failed to seek position in item operation file"))?;
+
+        file.lines()
             .map(|line| {
                 match line {
                     Ok(l) => Self::load_item_operation(&l),
@@ -310,6 +316,9 @@ impl Store for FileStorage {
             file.set_len(start)
                 .or_raise(|| StorageError::backend_specific("failed to truncate head operation file"))?;
 
+            file.seek(SeekFrom::Start(start))
+                .or_raise(|| StorageError::backend_specific("failed to seek position in head operation file"))?;
+
             file.write(line.as_bytes())
                 .or_raise(|| StorageError::backend_write(format!("failed to write head operation '{id}' to file")))?;
 
@@ -441,6 +450,9 @@ impl Store for FileStorage {
 
             file.set_len(start)
                 .or_raise(|| StorageError::backend_specific("failed to truncate item operation file"))?;
+        
+            file.seek(SeekFrom::Start(start))
+                .or_raise(|| StorageError::backend_specific("failed to seek position in item operation file"))?;
 
             file.write(line.as_bytes())
                 .or_raise(|| StorageError::backend_write(format!("failed to write item operation '{id}' to file")))?;
