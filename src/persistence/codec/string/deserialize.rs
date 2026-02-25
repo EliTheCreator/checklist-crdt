@@ -170,7 +170,7 @@ impl Parser {
 
         let name = Self::get_next_string(iter, "name")?;
         let description = Some(Self::get_next_string(iter, "description")?)
-            .filter(|s| s.is_empty());
+            .filter(|s| !s.is_empty());
 
         Ok(HeadOperation::Creation { id, history, template_id, name, description })
     }
