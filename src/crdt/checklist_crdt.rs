@@ -513,7 +513,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn init_test() {
+    fn add_items() {
         use crate::persistence::storage::FileStorage;
 
         let stamp_path = "./stamp.txt";
@@ -546,7 +546,7 @@ mod test {
     }
 
     #[test]
-    fn merge_test() {
+    fn join_replicas() {
         let mut crdt_1 = ChecklistCrdt::new(
             InMemoryStorage::new(),
         ).unwrap();
@@ -556,12 +556,12 @@ mod test {
         let first = crdt_1.add_checklist_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
         let second = crdt_1.add_checklist_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
 
-        let peer_data = crdt_1.fork().unwrap();
+        let replica_data = crdt_1.fork().unwrap();
         let mut crdt_2 = ChecklistCrdt::new(
             InMemoryStorage::init(
-                peer_data.stamp,
-                peer_data.operations.head_operations,
-                peer_data.operations.item_operations
+                replica_data.stamp,
+                replica_data.operations.head_operations,
+                replica_data.operations.item_operations
             ),
         ).unwrap();
 
@@ -579,11 +579,20 @@ mod test {
         crdt_1.apply_delta(delta_2_1).unwrap();
         crdt_2.apply_delta(delta_1_2).unwrap();
 
-        let mut peer_1 = crdt_1.fork().unwrap();
-        peer_1.stamp = Stamp::seed();
-        let mut peer_2 = crdt_2.fork().unwrap();
-        peer_2.stamp = Stamp::seed();
+        let mut replica_1 = crdt_1.fork().unwrap();
+        replica_1.stamp = Stamp::seed();
+        let mut replica_2 = crdt_2.fork().unwrap();
+        replica_2.stamp = Stamp::seed();
+        assert_eq!(replica_1, replica_2);
 
-        assert_eq!(peer_1, peer_2);
+        crdt_1.trim_operations().unwrap();
+        let mut replica_1 = crdt_1.fork().unwrap();
+        replica_1.stamp = Stamp::seed();
+        assert_ne!(replica_1, replica_2);
+
+        crdt_2.trim_operations().unwrap();
+        let mut replica_2 = crdt_2.fork().unwrap();
+        replica_2.stamp = Stamp::seed();
+        assert_eq!(replica_1, replica_2);
     }
 }
