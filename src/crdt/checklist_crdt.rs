@@ -1,6 +1,4 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::mem::discriminant;
 
 use exn::{bail, Exn, Result, ResultExt};
 use itc::{EventTree, IdTree, IntervalTreeClock, Stamp};
@@ -78,6 +76,21 @@ impl<S: Store> ChecklistCrdt<S> {
         })
     }
 
+    pub fn new_replica(
+        storage: S,
+        replica_state: ReplicaState<ChecklistOperations>
+    ) -> Result<Self, CrdtError> {
+        let mut crdt = ChecklistCrdt {
+            storage: storage,
+            itc_stamp: Stamp::new(IdTree::zero(), EventTree::zero()),
+        };
+
+        crdt.join(replica_state)
+            .or_raise(|| CrdtError::fatal("failed to join replica"))?;
+
+        Ok(crdt)
+    }
+
     fn abort_transaction(
         &mut self,
         e1: Exn<StorageError>,
@@ -96,6 +109,35 @@ impl<S: Store> ChecklistCrdt<S> {
     }
 
     fn save_checklist_head_operation(&mut self, operation: HeadOperation) -> Result<(), CrdtError> {
+        let associated_operations = self.storage
+            .load_all_associated_head_operations(operation.head_id())
+            .map_err(|e|
+                self.abort_transaction(e, "crdt unable to load associated head operations")
+            )?;
+
+        let mut obsolete_ops = Vec::new();
+        for assoc_op in associated_operations {
+            use HeadOperation::*;
+            match (&assoc_op, &operation) {
+                (Creation { .. }, Creation { .. })
+                | (NameUpdate { .. }, NameUpdate { .. })
+                | (DescriptionUpdate { .. }, DescriptionUpdate { .. })
+                | (CompletedUpdate { .. }, CompletedUpdate { .. })
+                | (Deletion { .. }, Deletion { .. }) => {
+                    match assoc_op.history().partial_cmp(operation.history()) {
+                        Some(Ordering::Less) => obsolete_ops.push(assoc_op),
+                        None if assoc_op.id() < operation.id() => obsolete_ops.push(assoc_op),
+                        _ => return Ok(()),
+                    }
+                },
+                _ => (),
+            }
+        }
+
+        for obsolete_op in obsolete_ops {
+            self.erase_checklist_head_operation(obsolete_op.id())?;
+        }
+
         self.storage.save_head_operation(operation).map_err(|e|
             self.abort_transaction(e, "crdt unable to store head operation")
         )
@@ -191,12 +233,41 @@ impl<S: Store> ChecklistCrdt<S> {
         transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
     }
 
-    pub fn get_all_checklist_heads(&self) -> Result<Vec<HeadOperation>, CrdtError> {
+    pub fn get_all_checklist_heads(&mut self) -> Result<Vec<HeadOperation>, CrdtError> {
         self.storage.load_all_head_operations()
             .or_raise(|| CrdtError::recovered("crdt unable to load all head operations"))
     }
 
     fn save_checklist_item_operation(&mut self, operation: ItemOperation) -> Result<(), CrdtError> {
+        let associated_operations = self.storage
+            .load_all_associated_item_operations(operation.item_id())
+            .map_err(|e|
+                self.abort_transaction(e, "crdt unable to load associated item operations")
+            )?;
+
+        let mut obsolete_ops = Vec::new();
+        for assoc_op in associated_operations {
+            use ItemOperation::*;
+            match (&assoc_op, &operation) {
+                (Creation { .. }, Creation { .. })
+                | (NameUpdate { .. }, NameUpdate { .. })
+                | (PositionUpdate { .. }, PositionUpdate { .. })
+                | (CheckedUpdate { .. }, CheckedUpdate { .. })
+                | (Deletion { .. }, Deletion { .. }) => {
+                    match assoc_op.history().partial_cmp(operation.history()) {
+                        Some(Ordering::Less) => obsolete_ops.push(assoc_op),
+                        None if assoc_op.id() < operation.id() => obsolete_ops.push(assoc_op),
+                        _ => return Ok(()),
+                    }
+                },
+                _ => (),
+            }
+        }
+
+        for obsolete_op in obsolete_ops {
+            self.erase_checklist_item_operation(obsolete_op.id())?;
+        }
+
         self.storage.save_item_operation(operation).map_err(|e|
             self.abort_transaction(e, "crdt unable to store item operation")
         )
@@ -292,146 +363,14 @@ impl<S: Store> ChecklistCrdt<S> {
         transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
     }
 
-    pub fn get_all_checklist_items(&self) -> Result<Vec<ItemOperation>, CrdtError> {
+    pub fn get_all_checklist_items(&mut self) -> Result<Vec<ItemOperation>, CrdtError> {
         self.storage.load_all_item_operations()
             .or_raise(|| CrdtError::recovered("crdt unable to load all item operations"))
-    }
-
-    fn find_trimable_head_operations(&self) -> Result<(Vec<Uuid>, HashSet<Uuid>), CrdtError> {
-        let operations = self.get_all_checklist_heads()?;
-        let grouped_operations = operations.iter()
-            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&HeadOperation>>, e| {
-                m.entry(e.head_id().clone()).or_default().push(e);
-                m
-            });
-
-        let mut trimable_operations = Vec::new();
-        let mut deleted_operations = Vec::new();
-        let deletion_discriminant = discriminant(&HeadOperation::Deletion { id: Uuid::default(), head_id: Uuid::default(), history: EventTree::zero() });
-        for group in grouped_operations.into_values() {
-            let discriminant_bins = group.into_iter()
-                .fold(HashMap::new(), |mut m: HashMap<_,Vec<&HeadOperation>>, e| {
-                    m.entry(discriminant(e)).or_default().push(e);
-                    m
-                });
-
-            let mut keep = Vec::new();
-            let mut headstone = None;
-            for mut bin in discriminant_bins.into_values() {
-                if let Some(operation) = bin.pop() {
-                    if discriminant(operation) == deletion_discriminant {
-                        headstone = Some(operation)
-                    } else {
-                        keep.push(operation);
-                    }
-                    trimable_operations.extend( bin);
-                }
-            }
-            if let Some(headstone) = headstone {
-                trimable_operations.extend(keep);
-                deleted_operations.push(headstone);
-            }
-        }
-
-        let trimable_operations_ids = trimable_operations.into_iter()
-            .map(|operation| operation.id().clone())
-            .collect::<Vec<Uuid>>();
-
-        let deleted_operations_ids = deleted_operations.into_iter()
-            .map(|operation| {
-                match operation {
-                    HeadOperation::Deletion { head_id, .. } => head_id.clone(),
-                    _ => unreachable!()
-                }
-            })
-            .collect::<HashSet<Uuid>>();
-
-        Ok((trimable_operations_ids, deleted_operations_ids))
-    }
-
-    fn find_trimable_item_operations(
-        &self,
-        deleted_head_operations_ids: HashSet<Uuid>
-    ) -> Result<Vec<Uuid>, CrdtError> {
-        let operations = self.get_all_checklist_items()?;
-        let grouped_operations = operations.iter()
-            .fold(HashMap::new(), |mut m: HashMap<Uuid, Vec<&ItemOperation>>, e| {
-                m.entry(e.item_id().clone()).or_default().push(e);
-                m
-            });
-
-        let mut trimable_operations = Vec::new();
-        let mut deleted_operations = Vec::new();
-        for group in grouped_operations.into_values() {
-            let discriminant_bins = group.into_iter()
-                .fold(HashMap::new(), |mut m: HashMap<_,Vec<&ItemOperation>>, e| {
-                    m.entry(discriminant(e)).or_default().push(e);
-                    m
-                });
-
-            let mut keep = Vec::new();
-            let mut headstone = None;
-            let mut delete_all = false;
-            for mut bin in discriminant_bins.into_values() {
-                let operation = match bin.pop() {
-                    Some(e) => e,
-                    None => continue,
-                };
-                match operation {
-                    ItemOperation::Creation { head_id, .. } => {
-                        if deleted_head_operations_ids.contains(&head_id) {
-                            delete_all = true;
-                        }
-                        keep.push(operation);
-                    },
-                    ItemOperation::Deletion { .. } => headstone = Some(operation),
-                    _ => keep.push(operation),
-                }
-                trimable_operations.extend( bin);
-            }
-
-            if delete_all {
-                trimable_operations.extend(keep);
-                if let Some(headstone) = headstone {
-                    trimable_operations.push(headstone);
-                }
-            } else if let Some(headstone) = headstone {
-                trimable_operations.extend(keep);
-                deleted_operations.push(headstone);
-            }
-        }
-
-        let trimable_operations_ids = trimable_operations.into_iter()
-            .map(|operation| operation.id().clone())
-            .collect::<Vec<Uuid>>();
-
-        Ok(trimable_operations_ids)
-    }
-
-    pub fn trim_operations(&mut self) -> Result<(Vec<HeadOperation>, Vec<ItemOperation>), CrdtError> {
-        let (trimable_head_operations_ids, deleted_head_operations_ids) = self
-            .find_trimable_head_operations()
-            .or_raise(|| CrdtError::recoverable("failed to find all trimable head operations"))?;
-        let trimable_item_operations_ids = self.find_trimable_item_operations(deleted_head_operations_ids)
-            .or_raise(|| CrdtError::recoverable("failed to find all trimable item operations"))?;
-
-        let stamp = self.itc_stamp.event();
-
-        transaction!(self, stamp, {
-            let deleted_item_operations = trimable_item_operations_ids.into_iter()
-                .map(|id| self.erase_checklist_item_operation(&id))
-                .collect::<Result<Vec<ItemOperation>, CrdtError>>()?;
-            let deleted_head_operations = trimable_head_operations_ids.into_iter()
-                .map(|id| self.erase_checklist_head_operation(&id))
-                .collect::<Result<Vec<HeadOperation>, CrdtError>>()?;
-
-            Ok((deleted_head_operations, deleted_item_operations))
-        })
     }
 }
 
 impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
-    fn get_delta_since(&self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
+    fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
         let mut head_operations = self.get_all_checklist_heads()?;
         head_operations.retain(|head| {
             match history.partial_cmp(head.history()) {
@@ -462,8 +401,8 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
             )))
         }
 
-        let peer_stamp = Stamp::new(IdTree::zero(), delta.target_history.clone());
-        let stamp = self.itc_stamp.join(&peer_stamp).event();
+        let replica_stamp = Stamp::new(IdTree::zero(), delta.target_history.clone());
+        let stamp = self.itc_stamp.join(&replica_stamp).event();
 
         transaction!(self, stamp, {
             for operation in delta.operations.head_operations {
@@ -485,18 +424,23 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
 
         transaction!(self, stamp, { Ok(()) })?;
         let operations = ChecklistOperations::new(head_operations, item_operations);
-        Ok(ReplicaState::new(replica_stamp, operations))
+        let delta = OperationDelta::new(
+            EventTree::zero(),
+            self.itc_stamp.history().clone(),
+            operations
+        );
+        Ok(ReplicaState::new(replica_stamp, delta))
     }
 
     fn join(&mut self, replica_state: ReplicaState<ChecklistOperations>) -> Result<(), CrdtError> {
         let stamp = self.itc_stamp.join(&replica_state.stamp);
 
         transaction!(self, stamp, {
-            for operation in replica_state.operations.head_operations {
+            for operation in replica_state.delta.operations.head_operations {
                 self.save_checklist_head_operation(operation)?;
             }
 
-            for operation in replica_state.operations.item_operations {
+            for operation in replica_state.delta.operations.item_operations {
                 self.save_checklist_item_operation(operation)?;
             }
 
@@ -508,7 +452,7 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
 
 #[cfg(test)]
 mod test {
-    use crate::persistence::storage::InMemoryStorage;
+    use crate::persistence::storage::{FileStorage, InMemoryStorage};
 
     use super::*;
 
@@ -546,7 +490,7 @@ mod test {
     }
 
     #[test]
-    fn join_replicas() {
+    fn join_in_memory_stored_replicas() {
         let mut crdt_1 = ChecklistCrdt::new(
             InMemoryStorage::new(),
         ).unwrap();
@@ -560,8 +504,8 @@ mod test {
         let mut crdt_2 = ChecklistCrdt::new(
             InMemoryStorage::init(
                 replica_data.stamp,
-                replica_data.operations.head_operations,
-                replica_data.operations.item_operations
+                replica_data.delta.operations.head_operations,
+                replica_data.delta.operations.item_operations
             ),
         ).unwrap();
 
@@ -575,24 +519,47 @@ mod test {
 
         let delta_1_2 = crdt_1.get_delta_since(crdt_2.itc_stamp.history()).unwrap();
         let delta_2_1 = crdt_2.get_delta_since(crdt_1.itc_stamp.history()).unwrap();
+        assert_ne!(delta_1_2, delta_2_1);
 
         crdt_1.apply_delta(delta_2_1).unwrap();
         crdt_2.apply_delta(delta_1_2).unwrap();
 
-        let mut replica_1 = crdt_1.fork().unwrap();
-        replica_1.stamp = Stamp::seed();
-        let mut replica_2 = crdt_2.fork().unwrap();
-        replica_2.stamp = Stamp::seed();
-        assert_eq!(replica_1, replica_2);
+        let replica_1 = crdt_1.fork().unwrap();
+        let replica_2 = crdt_2.fork().unwrap();
+        assert_eq!(replica_1.delta.operations, replica_2.delta.operations);
+    }
 
-        crdt_1.trim_operations().unwrap();
-        let mut replica_1 = crdt_1.fork().unwrap();
-        replica_1.stamp = Stamp::seed();
-        assert_ne!(replica_1, replica_2);
+    #[test]
+    fn join_in_file_stored_replicas() {
+        let storage_1 = FileStorage::new("stamp_1.txt", "head_1.txt", "item_1.txt").unwrap();
+        let storage_2 = FileStorage::new("stamp_2.txt", "head_2.txt", "item_2.txt").unwrap();
+        let mut crdt_1 = ChecklistCrdt::new(storage_1).unwrap();
 
-        crdt_2.trim_operations().unwrap();
-        let mut replica_2 = crdt_2.fork().unwrap();
-        replica_2.stamp = Stamp::seed();
-        assert_eq!(replica_1, replica_2);
+        let head_id = crdt_1.add_checklist_head(None, "A".into(), Some("ab c de".into())).unwrap();
+        let position = FractionalIndex::default();
+        let first = crdt_1.add_checklist_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
+        let second = crdt_1.add_checklist_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
+
+        let replica_data = crdt_1.fork().unwrap();
+        let mut crdt_2 = ChecklistCrdt::new_replica(storage_2, replica_data).unwrap();
+
+        crdt_1.update_checklist_head_name(&head_id, "B".into()).unwrap();
+        crdt_2.update_checklist_head_name(&head_id, "C".into()).unwrap();
+
+        crdt_1.update_checklist_item_checked(&first, true).unwrap();
+        crdt_2.update_checklist_item_checked(&second, true).unwrap();
+        crdt_2.update_checklist_item_name(&second, "3.2".into()).unwrap();
+        crdt_1.update_checklist_item_name(&second, "3.1".into()).unwrap();
+
+        let delta_1_2 = crdt_1.get_delta_since(crdt_2.itc_stamp.history()).unwrap();
+        let delta_2_1 = crdt_2.get_delta_since(crdt_1.itc_stamp.history()).unwrap();
+        assert_ne!(delta_1_2, delta_2_1);
+
+        crdt_1.apply_delta(delta_2_1).unwrap();
+        crdt_2.apply_delta(delta_1_2).unwrap();
+
+        let replica_1 = crdt_1.fork().unwrap();
+        let replica_2 = crdt_2.fork().unwrap();
+        assert_eq!(replica_1.delta.operations, replica_2.delta.operations);
     }
 }
