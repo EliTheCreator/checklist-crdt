@@ -15,12 +15,12 @@ pub trait Store {
     fn load_stamp(&mut self) -> Result<Stamp, StorageError>;
 
     fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError>;
-    fn load_all_head_operations(&self) -> Result<Vec<HeadOperation>, StorageError>;
+    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError>;
     fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError>;
     fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError>;
 
     fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError>;
-    fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError>;
+    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError>;
     fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError>;
     fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError>;
 }

@@ -302,7 +302,7 @@ impl Store for FileStorage {
         Ok(())
     }
 
-    fn load_all_head_operations(&self) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
         Ok(Self::load_all_head_operations_with_length(&self.head_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
@@ -438,7 +438,7 @@ impl Store for FileStorage {
         Ok(())
     }
 
-    fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
         Ok(Self::load_all_item_operations_with_length(&self.item_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()

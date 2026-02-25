@@ -109,7 +109,7 @@ impl Store for InMemoryStorage {
         Ok(())
     }
 
-    fn load_all_head_operations(&self) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
         Ok(self.head_operations.clone())
     }
 
@@ -149,7 +149,7 @@ impl Store for InMemoryStorage {
         Ok(())
     }
 
-    fn load_all_item_operations(&self) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
         Ok(self.item_operations.clone())
     }
 
