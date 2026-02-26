@@ -43,10 +43,10 @@ impl<T> ReplicaState<T> {
 
 
 pub trait Crdt<T, E>
-where E: Error + Send + Sync
+where E: Error + Send + Sync + 'static
 {
-    fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<T>, E>;
-    fn apply_delta(&mut self, delta: OperationDelta<T>) -> Result<(), E>;
-    fn fork(&mut self) -> Result<ReplicaState<T>, E>;
-    fn join(&mut self, replica_state: ReplicaState<T>) -> Result<(), E>;
+    async fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<T>, E>;
+    async fn apply_delta(&mut self, delta: OperationDelta<T>) -> Result<(), E>;
+    async fn fork(&mut self) -> Result<ReplicaState<T>, E>;
+    async fn join(&mut self, replica_state: ReplicaState<T>) -> Result<(), E>;
 }

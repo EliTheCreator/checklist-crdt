@@ -10,55 +10,55 @@ use super::store::Store;
 pub struct ErrorStorage;
 
 impl Store for ErrorStorage {
-    fn start_transaction(&mut self) -> Result<bool, StorageError> {
+    async fn start_transaction(&mut self) -> Result<bool, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn abort_transaction(&mut self) -> Result<bool, StorageError> {
+    async fn abort_transaction(&mut self) -> Result<bool, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn commit_transaction(&mut self) -> Result<bool, StorageError> {
+    async fn commit_transaction(&mut self) -> Result<bool, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_stamp(&mut self, _: &Stamp) -> Result<(), StorageError> {
+    async fn save_stamp(&mut self, _: &Stamp) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_stamp(&mut self) -> Result<Stamp, StorageError> {
+    async fn load_stamp(&mut self) -> Result<Stamp, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_head_operation(&mut self, _: HeadOperation) -> Result<(), StorageError> {
+    async fn save_head_operation(&mut self, _: HeadOperation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
+    async fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_associated_head_operations(&mut self, _: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+    async fn load_all_associated_head_operations(&mut self, _: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn erase_head_operation(&mut self, _: &Uuid) -> Result<HeadOperation, StorageError> {
+    async fn erase_head_operation(&mut self, _: &Uuid) -> Result<HeadOperation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_item_operation(&mut self, _: ItemOperation) -> Result<(), StorageError> {
+    async fn save_item_operation(&mut self, _: ItemOperation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
+    async fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_associated_item_operations(&mut self, _: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
+    async fn load_all_associated_item_operations(&mut self, _: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn erase_item_operation(&mut self, _: &Uuid) -> Result<ItemOperation, StorageError> {
+    async fn erase_item_operation(&mut self, _: &Uuid) -> Result<ItemOperation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 }
