@@ -76,7 +76,7 @@ impl<S: Store> ChecklistCrdt<S> {
         })
     }
 
-    pub fn new_replica(
+    pub fn new_from(
         storage: S,
         replica_state: ReplicaState<ChecklistOperations>
     ) -> Result<Self, CrdtError> {
@@ -108,7 +108,7 @@ impl<S: Store> ChecklistCrdt<S> {
         }
     }
 
-    fn save_checklist_head_operation(&mut self, operation: HeadOperation) -> Result<(), CrdtError> {
+    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), CrdtError> {
         let associated_operations = self.storage
             .load_all_associated_head_operations(operation.head_id())
             .map_err(|e|
@@ -116,7 +116,7 @@ impl<S: Store> ChecklistCrdt<S> {
             )?;
 
         let mut obsolete_ops = Vec::new();
-        for assoc_op in associated_operations {
+        for assoc_op in associated_operations.iter() {
             use HeadOperation::*;
             match (&assoc_op, &operation) {
                 (Creation { .. }, Creation { .. })
@@ -135,7 +135,7 @@ impl<S: Store> ChecklistCrdt<S> {
         }
 
         for obsolete_op in obsolete_ops {
-            self.erase_checklist_head_operation(obsolete_op.id())?;
+            self.erase_head_operation(obsolete_op.id())?;
         }
 
         self.storage.save_head_operation(operation).map_err(|e|
@@ -143,13 +143,13 @@ impl<S: Store> ChecklistCrdt<S> {
         )
     }
 
-    fn erase_checklist_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, CrdtError> {
+    fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, CrdtError> {
         self.storage.erase_head_operation(&id).map_err(|e|
             self.abort_transaction(e, "crdt unable to erase head operation")
         )
     }
 
-    pub fn add_checklist_head(
+    pub fn add_head(
         &mut self,
         template_id: Option<Uuid>,
         name: String,
@@ -166,12 +166,12 @@ impl<S: Store> ChecklistCrdt<S> {
         };
 
         let _: Result<(), CrdtError> = transaction!(self, stamp, {
-            self.save_checklist_head_operation(operation)
+            self.save_head_operation(operation)
         });
         Ok(id)
     }
 
-    pub fn update_checklist_head_name(
+    pub fn update_head_name(
         &mut self,
         head_id: &Uuid,
         name: String,
@@ -184,10 +184,10 @@ impl<S: Store> ChecklistCrdt<S> {
             name: name,
         };
 
-        transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
+        transaction!(self, stamp, { self.save_head_operation(operation) })
     }
 
-    pub fn update_checklist_head_description(
+    pub fn update_head_description(
         &mut self,
         head_id: &Uuid,
         description: Option<String>,
@@ -200,10 +200,10 @@ impl<S: Store> ChecklistCrdt<S> {
             description: description,
         };
 
-        transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
+        transaction!(self, stamp, { self.save_head_operation(operation) })
     }
 
-    pub fn update_checklist_head_completed(
+    pub fn update_head_completed(
         &mut self,
         head_id: &Uuid,
         completed: bool,
@@ -216,10 +216,10 @@ impl<S: Store> ChecklistCrdt<S> {
             completed: completed,
         };
 
-        transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
+        transaction!(self, stamp, { self.save_head_operation(operation) })
     }
 
-    pub fn delete_checklist_head(
+    pub fn delete_head(
         &mut self,
         head_id: &Uuid,
     ) -> Result<(), CrdtError> {
@@ -230,15 +230,15 @@ impl<S: Store> ChecklistCrdt<S> {
             head_id: head_id.clone(),
         };
 
-        transaction!(self, stamp, { self.save_checklist_head_operation(operation) })
+        transaction!(self, stamp, { self.save_head_operation(operation) })
     }
 
-    pub fn get_all_checklist_heads(&mut self) -> Result<Vec<HeadOperation>, CrdtError> {
+    pub fn get_heads(&mut self) -> Result<Vec<HeadOperation>, CrdtError> {
         self.storage.load_all_head_operations()
             .or_raise(|| CrdtError::recovered("crdt unable to load all head operations"))
     }
 
-    fn save_checklist_item_operation(&mut self, operation: ItemOperation) -> Result<(), CrdtError> {
+    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), CrdtError> {
         let associated_operations = self.storage
             .load_all_associated_item_operations(operation.item_id())
             .map_err(|e|
@@ -246,7 +246,7 @@ impl<S: Store> ChecklistCrdt<S> {
             )?;
 
         let mut obsolete_ops = Vec::new();
-        for assoc_op in associated_operations {
+        for assoc_op in associated_operations.iter() {
             use ItemOperation::*;
             match (&assoc_op, &operation) {
                 (Creation { .. }, Creation { .. })
@@ -265,7 +265,7 @@ impl<S: Store> ChecklistCrdt<S> {
         }
 
         for obsolete_op in obsolete_ops {
-            self.erase_checklist_item_operation(obsolete_op.id())?;
+            self.erase_item_operation(obsolete_op.id())?;
         }
 
         self.storage.save_item_operation(operation).map_err(|e|
@@ -273,13 +273,13 @@ impl<S: Store> ChecklistCrdt<S> {
         )
     }
 
-    fn erase_checklist_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, CrdtError> {
+    fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, CrdtError> {
         self.storage.erase_item_operation(id).map_err(|e|
             self.abort_transaction(e, "crdt unable to erase item operation")
         )
     }
 
-    pub fn add_checklist_item(
+    pub fn add_item(
         &mut self,
         head_id: Uuid,
         name: String,
@@ -296,12 +296,12 @@ impl<S: Store> ChecklistCrdt<S> {
         };
 
         let _: Result<(), CrdtError> = transaction!(self, stamp, {
-            self.save_checklist_item_operation(operation)
+            self.save_item_operation(operation)
         });
         Ok(id)
     }
 
-    pub fn update_checklist_item_name(
+    pub fn update_item_name(
         &mut self,
         item_id: &Uuid,
         name: String,
@@ -314,10 +314,10 @@ impl<S: Store> ChecklistCrdt<S> {
             name: name,
         };
 
-        transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
+        transaction!(self, stamp, { self.save_item_operation(operation) })
     }
 
-    pub fn update_checklist_item_position(
+    pub fn update_item_position(
         &mut self,
         item_id: &Uuid,
         position: FractionalIndex,
@@ -330,10 +330,10 @@ impl<S: Store> ChecklistCrdt<S> {
             position: position,
         };
 
-        transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
+        transaction!(self, stamp, { self.save_item_operation(operation) })
     }
 
-    pub fn update_checklist_item_checked(
+    pub fn update_item_checked(
         &mut self,
         item_id: &Uuid,
         checked: bool,
@@ -346,10 +346,10 @@ impl<S: Store> ChecklistCrdt<S> {
             checked: checked,
         };
 
-        transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
+        transaction!(self, stamp, { self.save_item_operation(operation) })
     }
 
-    pub fn delete_checklist_item(
+    pub fn delete_item(
         &mut self,
         item_id: &Uuid,
     ) -> Result<(), CrdtError> {
@@ -360,10 +360,10 @@ impl<S: Store> ChecklistCrdt<S> {
             item_id: item_id.clone(),
         };
 
-        transaction!(self, stamp, { self.save_checklist_item_operation(operation) })
+        transaction!(self, stamp, { self.save_item_operation(operation) })
     }
 
-    pub fn get_all_checklist_items(&mut self) -> Result<Vec<ItemOperation>, CrdtError> {
+    pub fn get_items(&mut self) -> Result<Vec<ItemOperation>, CrdtError> {
         self.storage.load_all_item_operations()
             .or_raise(|| CrdtError::recovered("crdt unable to load all item operations"))
     }
@@ -371,7 +371,7 @@ impl<S: Store> ChecklistCrdt<S> {
 
 impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
     fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
-        let mut head_operations = self.get_all_checklist_heads()?;
+        let mut head_operations = self.get_heads()?;
         head_operations.retain(|head| {
             match history.partial_cmp(head.history()) {
                 Some(ordering) => ordering == Ordering::Less,
@@ -379,7 +379,7 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
             }
         });
 
-        let mut item_operations = self.get_all_checklist_items()?;
+        let mut item_operations = self.get_items()?;
         item_operations.retain(|item| {
             match history.partial_cmp(item.history()) {
                 Some(ordering) => ordering == Ordering::Less,
@@ -402,25 +402,14 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
         }
 
         let replica_stamp = Stamp::new(IdTree::zero(), delta.target_history.clone());
-        let stamp = self.itc_stamp.join(&replica_stamp).event();
-
-        transaction!(self, stamp, {
-            for operation in delta.operations.head_operations {
-                self.save_checklist_head_operation(operation)?;
-            }
-
-            for operation in delta.operations.item_operations {
-                self.save_checklist_item_operation(operation)?;
-            }
-
-            Ok(())
-        })
+        let replica_state = ReplicaState::new(replica_stamp, delta);
+        self.join(replica_state)
     }
 
     fn fork(&mut self) -> Result<ReplicaState<ChecklistOperations>, CrdtError> {
         let (stamp, replica_stamp) = self.itc_stamp.fork();
-        let head_operations = self.get_all_checklist_heads()?;
-        let item_operations = self.get_all_checklist_items()?;
+        let head_operations = self.get_heads()?;
+        let item_operations = self.get_items()?;
 
         transaction!(self, stamp, { Ok(()) })?;
         let operations = ChecklistOperations::new(head_operations, item_operations);
@@ -433,15 +422,15 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
     }
 
     fn join(&mut self, replica_state: ReplicaState<ChecklistOperations>) -> Result<(), CrdtError> {
-        let stamp = self.itc_stamp.join(&replica_state.stamp);
+        let stamp = self.itc_stamp.join(&replica_state.stamp).event();
 
         transaction!(self, stamp, {
             for operation in replica_state.delta.operations.head_operations {
-                self.save_checklist_head_operation(operation)?;
+                self.save_head_operation(operation)?;
             }
 
             for operation in replica_state.delta.operations.item_operations {
-                self.save_checklist_item_operation(operation)?;
+                self.save_item_operation(operation)?;
             }
 
             Ok(())
@@ -472,17 +461,17 @@ mod test {
 
         let mut crdt = ChecklistCrdt::new(file_store).unwrap();
         let index = FractionalIndex::default();
-        crdt.add_checklist_item(
+        crdt.add_item(
             Uuid::now_v7(),
             "test item".into(),
             FractionalIndex::new_after(&index),
         ).unwrap();
-        crdt.add_checklist_item(
+        crdt.add_item(
             Uuid::now_v7(),
             "test 4 item".into(),
             FractionalIndex::new_after(&index),
         ).unwrap();
-        crdt.add_checklist_item(
+        crdt.add_item(
             Uuid::now_v7(),
             "test 3 asdf item".into(),
             FractionalIndex::new_before(&index),
@@ -495,10 +484,10 @@ mod test {
             InMemoryStorage::new(),
         ).unwrap();
 
-        let head_id = crdt_1.add_checklist_head(None, "A".into(), Some("ab c de".into())).unwrap();
+        let head_id = crdt_1.add_head(None, "A".into(), Some("ab c de".into())).unwrap();
         let position = FractionalIndex::default();
-        let first = crdt_1.add_checklist_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
-        let second = crdt_1.add_checklist_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
+        let first = crdt_1.add_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
+        let second = crdt_1.add_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
 
         let replica_data = crdt_1.fork().unwrap();
         let mut crdt_2 = ChecklistCrdt::new(
@@ -509,13 +498,13 @@ mod test {
             ),
         ).unwrap();
 
-        crdt_1.update_checklist_head_name(&head_id, "B".into()).unwrap();
-        crdt_2.update_checklist_head_name(&head_id, "C".into()).unwrap();
+        crdt_1.update_head_name(&head_id, "B".into()).unwrap();
+        crdt_2.update_head_name(&head_id, "C".into()).unwrap();
 
-        crdt_1.update_checklist_item_checked(&first, true).unwrap();
-        crdt_2.update_checklist_item_checked(&second, true).unwrap();
-        crdt_2.update_checklist_item_name(&second, "3.2".into()).unwrap();
-        crdt_1.update_checklist_item_name(&second, "3.1".into()).unwrap();
+        crdt_1.update_item_checked(&first, true).unwrap();
+        crdt_2.update_item_checked(&second, true).unwrap();
+        crdt_2.update_item_name(&second, "3.2".into()).unwrap();
+        crdt_1.update_item_name(&second, "3.1".into()).unwrap();
 
         let delta_1_2 = crdt_1.get_delta_since(crdt_2.itc_stamp.history()).unwrap();
         let delta_2_1 = crdt_2.get_delta_since(crdt_1.itc_stamp.history()).unwrap();
@@ -535,21 +524,21 @@ mod test {
         let storage_2 = FileStorage::new("stamp_2.txt", "head_2.txt", "item_2.txt").unwrap();
         let mut crdt_1 = ChecklistCrdt::new(storage_1).unwrap();
 
-        let head_id = crdt_1.add_checklist_head(None, "A".into(), Some("ab c de".into())).unwrap();
+        let head_id = crdt_1.add_head(None, "A".into(), Some("ab c de".into())).unwrap();
         let position = FractionalIndex::default();
-        let first = crdt_1.add_checklist_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
-        let second = crdt_1.add_checklist_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
+        let first = crdt_1.add_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
+        let second = crdt_1.add_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
 
         let replica_data = crdt_1.fork().unwrap();
-        let mut crdt_2 = ChecklistCrdt::new_replica(storage_2, replica_data).unwrap();
+        let mut crdt_2 = ChecklistCrdt::new_from(storage_2, replica_data).unwrap();
 
-        crdt_1.update_checklist_head_name(&head_id, "B".into()).unwrap();
-        crdt_2.update_checklist_head_name(&head_id, "C".into()).unwrap();
+        crdt_1.update_head_name(&head_id, "B".into()).unwrap();
+        crdt_2.update_head_name(&head_id, "C".into()).unwrap();
 
-        crdt_1.update_checklist_item_checked(&first, true).unwrap();
-        crdt_2.update_checklist_item_checked(&second, true).unwrap();
-        crdt_2.update_checklist_item_name(&second, "3.2".into()).unwrap();
-        crdt_1.update_checklist_item_name(&second, "3.1".into()).unwrap();
+        crdt_1.update_item_checked(&first, true).unwrap();
+        crdt_2.update_item_checked(&second, true).unwrap();
+        crdt_2.update_item_name(&second, "3.2".into()).unwrap();
+        crdt_1.update_item_name(&second, "3.1".into()).unwrap();
 
         let delta_1_2 = crdt_1.get_delta_since(crdt_2.itc_stamp.history()).unwrap();
         let delta_2_1 = crdt_2.get_delta_since(crdt_1.itc_stamp.history()).unwrap();
