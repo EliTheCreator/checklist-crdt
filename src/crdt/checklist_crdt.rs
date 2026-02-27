@@ -491,7 +491,7 @@ mod test {
 
         let replica_data = crdt_1.fork().unwrap();
         let mut crdt_2 = ChecklistCrdt::new(
-            InMemoryStorage::init(
+            InMemoryStorage::new_from(
                 replica_data.stamp,
                 replica_data.delta.operations.head_operations,
                 replica_data.delta.operations.item_operations

@@ -7,7 +7,13 @@ use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
 
-type RollbackFunction = Box<dyn FnOnce(&mut InMemoryStorage) -> Result<(), StorageError>>;
+enum RollbackFunction {
+    SaveHeadOperation(HeadOperation),
+    EraseHeadOperation(Uuid),
+    SaveItemOperation(ItemOperation),
+    EraseItemOperation(Uuid),
+    SaveStamp(Stamp),
+}
 
 
 pub struct InMemoryStorage {
@@ -29,7 +35,7 @@ impl InMemoryStorage {
         }
     }
 
-    pub fn init(
+    pub fn new_from(
         stamp: Stamp,
         head_operations: Vec<HeadOperation>,
         item_operations: Vec<ItemOperation>,
@@ -56,12 +62,25 @@ impl Store for InMemoryStorage {
             return  Ok(false);
         }
 
+        let total_steps = self.rollback_stack.len();
+        let mut current_step: usize = 0;
         while let Some(rollback_function) = self.rollback_stack.pop() {
-            if let Err(e) = rollback_function(self) {
+            current_step += 1;
+
+            use RollbackFunction::*;
+            let rollback_result = match rollback_function {
+                SaveHeadOperation(operation) => self.save_head_operation(operation),
+                EraseHeadOperation(id) => self.erase_head_operation(&id).map(|_| ()),
+                SaveItemOperation(operation) => self.save_item_operation(operation),
+                EraseItemOperation(id) => self.erase_item_operation(&id).map(|_| ()),
+                SaveStamp(stamp) => self.save_stamp(&stamp),
+            };
+
+            if let Err(e) = rollback_result {
                 self.rollback_stack.clear();
-                return Result::Err(e.raise(
-                    StorageError::transaction_rollback_partial("failed to rollback all transaction steps")
-                ));
+                bail!(e.raise(StorageError::transaction_rollback_partial(format!(
+                    "failed to rollback step {current_step} of {total_steps} of the transaction"
+                ))));
             }
         }
 
@@ -80,10 +99,7 @@ impl Store for InMemoryStorage {
     fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError> {
         let stamp_cpy= self.stamp.clone();
         if self.in_transaction {
-            self.rollback_stack.push(Box::new(move |store: &mut InMemoryStorage| {
-                store.stamp = stamp_cpy;
-                Ok(())
-            }));
+            self.rollback_stack.push(RollbackFunction::SaveStamp(stamp_cpy));
         }
 
         self.stamp = stamp.clone();
@@ -95,15 +111,14 @@ impl Store for InMemoryStorage {
     }
 
     fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
+        let id = operation.id().clone();
+
         let index = self.head_operations.binary_search_by_key(operation.id(), |h| *h.id())
             .unwrap_or_else(|i| i);
-        self.head_operations.insert(index, operation.clone());
+        self.head_operations.insert(index, operation);
 
         if self.in_transaction {
-            self.rollback_stack.push(Box::new(move |store: &mut InMemoryStorage| {
-                store.head_operations.remove(index);
-                Ok(())
-            }));
+            self.rollback_stack.push(RollbackFunction::EraseHeadOperation(id));
         }
 
         Ok(())
@@ -131,19 +146,23 @@ impl Store for InMemoryStorage {
         };
 
         let head_operation = self.head_operations.remove(index);
+
+        if self.in_transaction {
+            self.rollback_stack.push(RollbackFunction::SaveHeadOperation(head_operation.clone()));
+        }
+
         Ok(head_operation)
     }
 
     fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError> {
+        let id = operation.id().clone();
+
         let index = self.item_operations.binary_search_by_key(operation.id(), |h| *h.id())
             .unwrap_or_else(|i| i);
-        self.item_operations.insert(index, operation.clone());
+        self.item_operations.insert(index, operation);
 
         if self.in_transaction {
-            self.rollback_stack.push(Box::new(move |store: &mut InMemoryStorage| {
-                store.item_operations.remove(index);
-                Ok(())
-            }));
+            self.rollback_stack.push(RollbackFunction::EraseItemOperation(id));
         }
 
         Ok(())
@@ -171,6 +190,11 @@ impl Store for InMemoryStorage {
         };
 
         let item_operation = self.item_operations.remove(index);
+
+        if self.in_transaction {
+            self.rollback_stack.push(RollbackFunction::SaveItemOperation(item_operation.clone()));
+        }
+
         Ok(item_operation)
     }
 }
