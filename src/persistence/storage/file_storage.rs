@@ -7,6 +7,7 @@ use itc::Stamp;
 use uuid::Uuid;
 
 use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
+use crate::persistence::storage::BoxedFuture;
 use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
@@ -184,13 +185,23 @@ impl FileStorage {
 
 
 impl Store for FileStorage {
-    async fn start_transaction(&mut self) -> Result<bool, StorageError> {
+    type EmtpyFuture<'a> = BoxedFuture<'a, Result<(), StorageError>> where Self: 'a;
+    type BoolFuture<'a> = BoxedFuture<'a, Result<bool, StorageError>> where Self: 'a;
+    type StampFuture<'a> = BoxedFuture<'a, Result<Stamp, StorageError>> where Self: 'a;
+    type HeadFuture<'a> = BoxedFuture<'a, Result<HeadOperation, StorageError>> where Self: 'a;
+    type VecHeadFuture<'a> = BoxedFuture<'a, Result<Vec<HeadOperation>, StorageError>> where Self: 'a;
+    type ItemFuture<'a> = BoxedFuture<'a, Result<ItemOperation, StorageError>> where Self: 'a;
+    type VecItemFuture<'a> = BoxedFuture<'a, Result<Vec<ItemOperation>, StorageError>> where Self: 'a;
+
+    fn start_transaction<'a>(&'a mut self) -> Self::BoolFuture<'a> {
+    Box::pin(async move {
         let return_value = !self.in_transaction;
         self.in_transaction = true;
         Ok(return_value)
-    }
+    })}
 
-    async fn abort_transaction(&mut self) -> Result<bool, StorageError> {
+    fn abort_transaction<'a>(&'a mut self) -> Self::BoolFuture<'a> {
+    Box::pin(async move {
         if !self.in_transaction {
             return  Ok(false);
         }
@@ -203,10 +214,10 @@ impl Store for FileStorage {
             use RollbackFunction::*;
             let rollback_result = match rollback_function {
                 SaveHeadOperation(operation) => self.save_head_operation(operation).await,
-                EraseHeadOperation(id) => self.erase_head_operation(&id).await.map(|_| ()),
+                EraseHeadOperation(id) => self.erase_head_operation(id.clone()).await.map(|_| ()),
                 SaveItemOperation(operation) => self.save_item_operation(operation).await,
-                EraseItemOperation(id) => self.erase_item_operation(&id).await.map(|_| ()),
-                SaveStamp(stamp) => self.save_stamp(&stamp).await,
+                EraseItemOperation(id) => self.erase_item_operation(id.clone()).await.map(|_| ()),
+                SaveStamp(stamp) => self.save_stamp(stamp.clone()).await,
                 EraseStamp => {
                     self.stamp_file.set_len(0)
                         .or_raise(|| StorageError::backend_specific("failed to truncate stamp file"))
@@ -223,17 +234,19 @@ impl Store for FileStorage {
 
         self.in_transaction = false;
         Ok(true)
-    }
+    })}
 
-    async fn commit_transaction(&mut self) -> Result<bool, StorageError> {
+    fn commit_transaction<'a>(&'a mut self) -> Self::BoolFuture<'a> {
+    Box::pin(async move {
         if !self.in_transaction {
             return  Ok(false);
         }
         self.rollback_stack.clear();
         Ok(true)
-    }
+    })}
 
-    async fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError> {
+    fn save_stamp<'a>(&'a mut self, stamp: Stamp) -> Self::EmtpyFuture<'a> {
+    Box::pin(async move {
         if self.in_transaction {
             let file_size = self.stamp_file.metadata()
                 .or_raise(|| StorageError::backend_specific("failed to read stamp file metadata"))?
@@ -257,9 +270,10 @@ impl Store for FileStorage {
             .or_raise(|| StorageError::backend_write("failed to write stamp to file"))?;
 
         Ok(())
-    }
+    })}
 
-    async fn load_stamp(&mut self) -> Result<Stamp, StorageError> {
+    fn load_stamp<'a>(&'a mut self) -> Self::StampFuture<'a> {
+    Box::pin(async move {
         let file_size = self.stamp_file.metadata()
             .or_raise(|| StorageError::backend_specific("failed to read stamp file metadata"))?
             .len();
@@ -277,9 +291,10 @@ impl Store for FileStorage {
             .or_raise(|| StorageError::stamp_invalid(format!("failed to parse stamp '{}'", &stamp_buf)))?;
 
         Ok(stamp)
-    }
+    })}
 
-    async fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
+    fn save_head_operation<'a>(&'a mut self, operation: HeadOperation) -> Self::EmtpyFuture<'a> {
+    Box::pin(async move {
         let id = operation.id().clone();
         let head_id = operation.head_id().clone();
         let line: String = operation.into();
@@ -337,31 +352,34 @@ impl Store for FileStorage {
         }
 
         Ok(())
-    }
+    })}
 
-    async fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_head_operations<'a>(&'a mut self) -> Self::VecHeadFuture<'a> {
+    Box::pin(async move {
         Ok(Self::load_all_head_operations_with_length(&self.head_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
-    }
+    })}
 
-    async fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_associated_head_operations<'a>(&'a mut self, head_id: Uuid) -> Self::VecHeadFuture<'a> {
+    Box::pin(async move {
         self.head_log_file.operation_positions.iter()
-            .filter(|meta| meta.associated_id == *head_id)
+            .filter(|meta| meta.associated_id == head_id)
             .map(|meta| {
                 Self::load_line(&mut self.head_log_file.file, meta.offset, meta.length-1)
                     .and_then(|line| Self::load_head_operation(&line))
                     .and_then(|pair| Ok(pair.1))
             })
             .collect()
-    }
+    })}
 
-    async fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
+    fn erase_head_operation<'a>(&'a mut self, id: Uuid) -> Self::HeadFuture<'a> {
+    Box::pin(async move {
         let file = &mut self.head_log_file.file;
         let operation_positions = &mut self.head_log_file.operation_positions;
 
-        let index = match operation_positions.binary_search_by_key(id, |i| i.id) {
+        let index = match operation_positions.binary_search_by_key(&id, |i| i.id) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
                 format!("unable to find position of head operation with id '{id}'")
@@ -411,9 +429,10 @@ impl Store for FileStorage {
         }
 
         Ok(head_operation)
-    }
+    })}
 
-    async fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError> {
+    fn save_item_operation<'a>(&'a mut self, operation: ItemOperation) -> Self::EmtpyFuture<'a> {
+    Box::pin(async move {
         let id = operation.id().clone();
         let item_id = operation.item_id().clone();
         let line: String = operation.into();
@@ -472,31 +491,34 @@ impl Store for FileStorage {
         }
 
         Ok(())
-    }
+    })}
 
-    async fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_item_operations<'a>(&'a mut self) -> Self::VecItemFuture<'a> {
+    Box::pin(async move {
         Ok(Self::load_all_item_operations_with_length(&self.item_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
-    }
+    })}
 
-    async fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_associated_item_operations<'a>(&'a mut self, item_id: Uuid) -> Self::VecItemFuture<'a> {
+    Box::pin(async move {
         self.item_log_file.operation_positions.iter()
-            .filter(|meta| meta.associated_id == *item_id)
+            .filter(|meta| meta.associated_id == item_id)
             .map(|meta| {
                 Self::load_line(&mut self.item_log_file.file, meta.offset, meta.length-1)
                     .and_then(|line| Self::load_item_operation(&line))
                     .and_then(|pair| Ok(pair.1))
             })
             .collect()
-    }
+    })}
 
-    async fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
+    fn erase_item_operation<'a>(&'a mut self, id: Uuid) -> Self::ItemFuture<'a> {
+    Box::pin(async move {
         let file = &mut self.item_log_file.file;
         let operation_positions = &mut self.item_log_file.operation_positions;
 
-        let index = match operation_positions.binary_search_by_key(id, |i| i.id) {
+        let index = match operation_positions.binary_search_by_key(&id, |i| i.id) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
                 format!("unable to find position of item operation with id '{id}'")
@@ -546,7 +568,7 @@ impl Store for FileStorage {
         }
 
         Ok(item_operation)
-    }
+    })}
 }
 
 

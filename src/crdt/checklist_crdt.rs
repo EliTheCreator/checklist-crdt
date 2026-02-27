@@ -5,7 +5,7 @@ use itc::{EventTree, IdTree, IntervalTreeClock, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
-use crate::crdt::crdt::{Crdt, OperationDelta, ReplicaState};
+use crate::crdt::crdt::{BoxedFuture, Crdt, OperationDelta, ReplicaState};
 use crate::crdt::crdt_error::CrdtError;
 use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::{StorageError, ErrorKind};
@@ -33,7 +33,7 @@ macro_rules! transaction {
 
         let _ = try_abort!(
             $this,
-            $this.storage.save_stamp(&$stamp),
+            $this.storage.save_stamp($stamp.clone()),
             "crdt unable to save stamp"
         )?;
 
@@ -76,7 +76,7 @@ impl<S: Store> ChecklistCrdt<S> {
             Ok(s) => s,
             Err(e) if e.kind == ErrorKind::StampNone =>{
                 let stamp = Stamp::seed();
-                storage.save_stamp(&stamp).await
+                storage.save_stamp(stamp.clone()).await
                     .or_raise(|| CrdtError::fatal("failed to save new stamp"))?;
                 stamp
             },
@@ -86,8 +86,7 @@ impl<S: Store> ChecklistCrdt<S> {
         Ok(ChecklistCrdt {
             storage: storage,
             itc_stamp: stamp,
-        })
-    }
+        })}
 
     pub async fn new_from(
         storage: S,
@@ -124,7 +123,7 @@ impl<S: Store> ChecklistCrdt<S> {
     async fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), CrdtError> {
         let associated_operations = try_abort!(
             self,
-            self.storage.load_all_associated_head_operations(operation.head_id()),
+            self.storage.load_all_associated_head_operations(operation.head_id().clone()),
             "crdt unable to load associated head operations"
         )?;
 
@@ -161,7 +160,7 @@ impl<S: Store> ChecklistCrdt<S> {
     async fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, CrdtError> {
         try_abort!(
             self,
-            self.storage.erase_head_operation(&id),
+            self.storage.erase_head_operation(id.clone()),
             "crdt unable to erase head operation"
         )
     }
@@ -258,7 +257,7 @@ impl<S: Store> ChecklistCrdt<S> {
     async fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), CrdtError> {
         let associated_operations = try_abort!(
             self,
-            self.storage.load_all_associated_item_operations(operation.item_id()),
+            self.storage.load_all_associated_item_operations(operation.item_id().clone()),
             "crdt unable to load associated item operations"
         )?;
 
@@ -295,7 +294,7 @@ impl<S: Store> ChecklistCrdt<S> {
     async fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, CrdtError> {
         try_abort!(
             self,
-            self.storage.erase_item_operation(id),
+            self.storage.erase_item_operation(id.clone()),
             "crdt unable to erase item operation"
         )
     }
@@ -389,7 +388,12 @@ impl<S: Store> ChecklistCrdt<S> {
 }
 
 impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
-    async fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
+    type EmtpyFuture<'a> = BoxedFuture<'a, Result<(), CrdtError>> where Self: 'a;
+    type OperationDeltaFuture<'a> = BoxedFuture<'a, Result<OperationDelta<ChecklistOperations>, CrdtError>> where Self: 'a;
+    type ReplicaStateFuture<'a> = BoxedFuture<'a, Result<ReplicaState<ChecklistOperations>, CrdtError>> where Self: 'a;
+
+    fn get_delta_since<'a>(&'a mut self, history: EventTree) -> Self::OperationDeltaFuture<'a> {
+    Box::pin(async move {
         let mut head_operations = self.get_heads().await?;
         head_operations.retain(|head| {
             match history.partial_cmp(head.history()) {
@@ -410,9 +414,10 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
 
         let operations = ChecklistOperations::new(head_operations, item_operations);
         Ok(OperationDelta::new(history, local_history, operations))
-    }
+    })}
 
-    async fn apply_delta(&mut self, delta: OperationDelta<ChecklistOperations>) -> Result<(), CrdtError> {
+    fn apply_delta<'a>(&'a mut self, delta: OperationDelta<ChecklistOperations>) -> Self::EmtpyFuture<'a> {
+    Box::pin(async move {
         if !delta.is_applicable_to(&self.itc_stamp.history()) {
             bail!(CrdtError::causal_gap(concat!(
                 "causal gap between local and base history deteceted. this may lead to lost ",
@@ -423,9 +428,10 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
         let replica_stamp = Stamp::new(IdTree::zero(), delta.target_history.clone());
         let replica_state = ReplicaState::new(replica_stamp, delta);
         self.join(replica_state).await
-    }
+    })}
 
-    async fn fork(&mut self) -> Result<ReplicaState<ChecklistOperations>, CrdtError> {
+    fn fork<'a>(&'a mut self) -> Self::ReplicaStateFuture<'a> {
+    Box::pin(async move {
         let (stamp, replica_stamp) = self.itc_stamp.fork();
         let head_operations = self.get_heads().await?;
         let item_operations = self.get_items().await?;
@@ -438,9 +444,10 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
             operations
         );
         Ok(ReplicaState::new(replica_stamp, delta))
-    }
+    })}
 
-    async fn join(&mut self, replica_state: ReplicaState<ChecklistOperations>) -> Result<(), CrdtError> {
+    fn join<'a>(&'a mut self, replica_state: ReplicaState<ChecklistOperations>) -> Self::EmtpyFuture<'a> {
+    Box::pin(async move {
         let stamp = self.itc_stamp.join(&replica_state.stamp).event();
 
         transaction!(self, stamp, async {
@@ -454,7 +461,7 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
 
             Ok(())
         })
-    }
+    })}
 }
 
 

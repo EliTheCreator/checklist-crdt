@@ -1,3 +1,6 @@
+use core::future::Future;
+use core::pin::Pin;
+
 use exn::Result;
 use itc::Stamp;
 use uuid::Uuid;
@@ -6,21 +9,52 @@ use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::storage_error::StorageError;
 
 
+pub type BoxedFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
+
 pub trait Store {
-    async fn start_transaction(&mut self) -> Result<bool, StorageError>;
-    async fn abort_transaction(&mut self) -> Result<bool, StorageError>;
-    async fn commit_transaction(&mut self) -> Result<bool, StorageError>;
+    type EmtpyFuture<'a>: Future<Output = Result<(), StorageError>> + 'a
+    where
+        Self: 'a;
 
-    async fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError>;
-    async fn load_stamp(&mut self) -> Result<Stamp, StorageError>;
+    type BoolFuture<'a>: Future<Output = Result<bool, StorageError>> + 'a
+    where
+        Self: 'a;
 
-    async fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError>;
-    async fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError>;
-    async fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError>;
-    async fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError>;
+    type StampFuture<'a>: Future<Output = Result<Stamp, StorageError>> + 'a
+    where
+        Self: 'a;
 
-    async fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError>;
-    async fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError>;
-    async fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError>;
-    async fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError>;
+    type HeadFuture<'a>: Future<Output = Result<HeadOperation, StorageError>> + 'a
+    where
+        Self: 'a;
+
+    type VecHeadFuture<'a>: Future<Output = Result<Vec<HeadOperation>, StorageError>> + 'a
+    where
+        Self: 'a;
+
+    type ItemFuture<'a>: Future<Output = Result<ItemOperation, StorageError>> + 'a
+    where
+        Self: 'a;
+
+    type VecItemFuture<'a>: Future<Output = Result<Vec<ItemOperation>, StorageError>> + 'a
+    where
+        Self: 'a;
+
+    fn start_transaction<'a>(&'a mut self) -> Self::BoolFuture<'a>;
+    fn abort_transaction<'a>(&'a mut self) -> Self::BoolFuture<'a>;
+    fn commit_transaction<'a>(&'a mut self) -> Self::BoolFuture<'a>;
+
+    fn save_stamp<'a>(&'a mut self, stamp: Stamp) -> Self::EmtpyFuture<'a>;
+    fn load_stamp<'a>(&'a mut self) -> Self::StampFuture<'a>;
+
+    fn save_head_operation<'a>(&'a mut self, operation: HeadOperation) -> Self::EmtpyFuture<'a>;
+    fn load_all_head_operations<'a>(&'a mut self) -> Self::VecHeadFuture<'a>;
+    fn load_all_associated_head_operations<'a>(&'a mut self, head_id: Uuid) -> Self::VecHeadFuture<'a>;
+    fn erase_head_operation<'a>(&'a mut self, id: Uuid) -> Self::HeadFuture<'a>;
+
+    fn save_item_operation<'a>(&'a mut self, operation: ItemOperation) -> Self::EmtpyFuture<'a>;
+    fn load_all_item_operations<'a>(&'a mut self) -> Self::VecItemFuture<'a>;
+    fn load_all_associated_item_operations<'a>(&'a mut self, item_id: Uuid) -> Self::VecItemFuture<'a>;
+    fn erase_item_operation<'a>(&'a mut self, id: Uuid) -> Self::ItemFuture<'a>;
 }

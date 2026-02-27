@@ -1,7 +1,12 @@
 use core::error::Error;
+use core::future::Future;
+use core::pin::Pin;
 
 use exn::Result;
 use itc::{EventTree, Stamp};
+
+
+pub type BoxedFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 
 #[derive(Debug, PartialEq)]
@@ -45,8 +50,20 @@ impl<T> ReplicaState<T> {
 pub trait Crdt<T, E>
 where E: Error + Send + Sync + 'static
 {
-    async fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<T>, E>;
-    async fn apply_delta(&mut self, delta: OperationDelta<T>) -> Result<(), E>;
-    async fn fork(&mut self) -> Result<ReplicaState<T>, E>;
-    async fn join(&mut self, replica_state: ReplicaState<T>) -> Result<(), E>;
+    type EmtpyFuture<'a>: Future<Output = Result<(), E>> + 'a
+    where
+        Self: 'a;
+
+    type OperationDeltaFuture<'a>: Future<Output = Result<OperationDelta<T>, E>> + 'a
+    where
+        Self: 'a;
+
+    type ReplicaStateFuture<'a>: Future<Output = Result<ReplicaState<T>, E>> + 'a
+    where
+        Self: 'a;
+
+    fn get_delta_since<'a>(&'a mut self, history: EventTree) -> Self::OperationDeltaFuture<'a>;
+    fn apply_delta<'a>(&'a mut self, delta: OperationDelta<T>) -> Self::EmtpyFuture<'a>;
+    fn fork<'a>(&'a mut self) -> Self::ReplicaStateFuture<'a>;
+    fn join<'a>(&'a mut self, replica_state: ReplicaState<T>) -> Self::EmtpyFuture<'a>;
 }
