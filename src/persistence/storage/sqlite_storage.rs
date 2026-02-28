@@ -421,7 +421,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
             .or_raise(|| StorageError::backend_specific("failed to load stamp"))?
             .ok_or_raise(|| StorageError::stamp_none("expected stamp record, found none"))?;
 
-        let stamp_slice: &[u8] = row.try_get("payload")
+        let stamp_slice: &[u8] = row.try_get("stamp")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'stamp' field"))?;
 
         Stamp::try_from(stamp_slice)
@@ -594,5 +594,48 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
             .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))?;
 
         Self::sqlite_row_to_item_operation(row)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+    use tokio::runtime::Runtime;
+    use std::{future::Future, str::FromStr};
+
+
+    pub struct TokioBlockOn {
+        runtime: Runtime,
+    }
+
+    impl TokioBlockOn {
+        pub fn new() -> Self {
+            Self { runtime: Runtime::new().unwrap() }
+        }
+    }
+
+    impl BlockOn for TokioBlockOn {
+        fn block_on<F: Future>(&self, fut: F) -> F::Output {
+            self.runtime.block_on(fut)
+        }
+    }
+
+    #[test]
+    fn basic_in_memory_init() {
+        let executor = TokioBlockOn::new();
+        let sql_connection_options = SqliteConnectOptions::from_str("sqlite::memory:").unwrap();
+        let sql_connection_options = sql_connection_options.in_memory(true);
+        let sqlite_pool = executor
+            .block_on(SqlitePool::connect_with(sql_connection_options))
+            .unwrap();
+        let mut connection = executor.block_on(sqlite_pool.acquire()).unwrap();
+        let mut storage = SqliteStorage::new(&mut connection, &executor).unwrap();
+
+        storage.save_stamp(&Stamp::seed()).unwrap();
+        let _ = storage.load_stamp().unwrap();
+        executor.block_on(async {drop(storage)});
+        executor.block_on(async {drop(connection)});
     }
 }
