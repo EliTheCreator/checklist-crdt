@@ -400,7 +400,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
                 query
                     .execute(&mut **self.sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed to save stamp"))?;
+            .or_raise(|| StorageError::backend_write("failed to save stamp"))?;
 
         Ok(())
     }
@@ -418,7 +418,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
                 query
                     .fetch_optional(&mut **self.sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed to load stamp"))?
+            .or_raise(|| StorageError::backend_read("failed to load stamp"))?
             .ok_or_raise(|| StorageError::stamp_none("expected stamp record, found none"))?;
 
         let stamp_slice: &[u8] = row.try_get("stamp")
@@ -447,7 +447,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
                 query
                     .execute(&mut **self.sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed save head operation"))?;
+            .or_raise(|| StorageError::backend_write("failed save head operation"))?;
 
         Ok(())
     }
@@ -464,7 +464,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
             query
                     .fetch_all(&mut **self.sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed load head operations"))?;
+            .or_raise(|| StorageError::backend_read("failed load head operations"))?;
 
         row.into_iter()
             .map(|row| Self::sqlite_row_to_head_operation(row))
@@ -485,7 +485,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
             query
                     .fetch_all(&mut **self.sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed load head operations"))?;
+            .or_raise(|| StorageError::backend_read("failed load head operations"))?;
 
         row.into_iter()
             .map(|row| Self::sqlite_row_to_head_operation(row))
@@ -531,7 +531,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
                 query
                     .execute(&mut **self.sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed to save item operation"))?;
+            .or_raise(|| StorageError::backend_write("failed to save item operation"))?;
 
         Ok(())
     }
@@ -548,7 +548,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
             query
                     .fetch_all(&mut **self.sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("expected record, found none"))?;
+            .or_raise(|| StorageError::backend_read("expected record, found none"))?;
 
         row.into_iter()
             .map(|row| Self::sqlite_row_to_item_operation(row))
@@ -569,7 +569,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
             query
                     .fetch_all(&mut **self.sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed to load item operations"))?;
+            .or_raise(|| StorageError::backend_read("failed to load item operations"))?;
 
         row.into_iter()
             .map(|row| Self::sqlite_row_to_item_operation(row))
