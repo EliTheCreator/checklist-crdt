@@ -1,0 +1,607 @@
+use core::future::Future;
+use exn::{OptionExt, Result, ResultExt, bail};
+use itc::{EventTree, Stamp};
+use loro_fractional_index::FractionalIndex;
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::sqlite::{SqlitePoolOptions, SqliteRow};
+use uuid::Uuid;
+
+use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
+use crate::persistence::StorageError;
+use crate::persistence::storage::Store;
+
+
+pub trait BlockOn {
+    fn block_on<F: Future>(&self, fut: F) -> F::Output;
+}
+
+
+pub struct SqliteStorage<B: BlockOn> {
+    sqlite_pool: SqlitePool,
+    executor: B,
+    transaction: Option<Transaction<'static, Sqlite>>
+}
+
+impl<B: BlockOn> SqliteStorage<B> {
+    pub fn new(sqlite_pool: SqlitePool, executor: B) -> Result<Self, StorageError> {
+        let _ = executor.block_on(
+            sqlx::query(
+                    r#"
+                        CREATE TABLE IF NOT EXISTS stamp (
+                            id INTEGER PRIMARY KEY NOT CHECK (id = 0),
+                            stamp BLOB NOT NULL,
+                        ) WITHOUT ROWID;
+                        "#
+                    )
+                    .execute(&sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let _ = executor.block_on(
+            sqlx::query(
+                    r#"
+                        CREATE TABLE IF NOT EXISTS head_operation (
+                            id BLOB PRIMARY KEY NOT NULL,
+                            history BLOB NOT NULL,
+                            secondary_id BLOB NOT NULL,
+                            variant INTEGER NOT NULL,
+                            payload BLOB NOT NULL
+                        ) WITHOUT ROWID;
+                        "#
+                    )
+                    .execute(&sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let _ = executor.block_on(
+            sqlx::query(
+                    r#"
+                        CREATE TABLE IF NOT EXISTS item_operation (
+                            id BLOB PRIMARY KEY NOT NULL,
+                            history BLOB NOT NULL,
+                            secondary_id BLOB NOT NULL,
+                            variant INTEGER NOT NULL,
+                            payload BLOB NOT NULL
+                        ) WITHOUT ROWID;
+                        "#
+                    )
+                    .execute(&sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        Ok(Self { sqlite_pool, executor, transaction: None })
+    }
+
+    pub fn new_inmemory(executor: B) -> Result<Self, StorageError> {
+        let sqlite_pool = executor.block_on(
+            SqlitePoolOptions::new()
+                    .connect("sqlite::memory")
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        Self::new(sqlite_pool, executor)
+    }
+
+    fn usize_to_vec_u8(mut num: usize) -> Vec<u8> {
+        let mask: usize = 1<<7 - 1;
+
+        let mut binary = Vec::new();
+        while num != 0 {
+            binary.push((num&mask) as u8);
+            num >>= 7;
+        }
+
+        binary.iter_mut().rev().skip(1).for_each(|n| {*n |= 1<<7;});
+
+        binary
+    }
+
+    fn str_to_vec_u8(string: &str) -> Vec<u8> {
+        let string_as_bytes = string.to_string().into_bytes();
+        let length = string_as_bytes.len();
+
+        let mut length_as_bytes = Self::usize_to_vec_u8(length);
+        length_as_bytes.extend(string_as_bytes);
+
+        length_as_bytes
+    }
+
+    fn head_to_payload(operation: &HeadOperation) -> Vec<u8> {
+        use HeadOperation::*;
+        match operation {
+            Creation { name, description, .. } => {
+                let mut bytes = Self::str_to_vec_u8(name);
+                let description = description.as_deref().unwrap_or_default();
+                let description_as_bytes = Self::str_to_vec_u8(description);
+                bytes.extend(description_as_bytes);
+
+                bytes
+            },
+            NameUpdate { name, ..} => {
+                Self::str_to_vec_u8(name)
+            },
+            DescriptionUpdate {description, .. } => {
+                let description = description.as_deref().unwrap_or_default();
+                Self::str_to_vec_u8(description)
+            },
+            CompletedUpdate { completed, ..} => {
+                vec![completed.clone() as u8,]
+            },
+            Deletion { .. }  => Vec::new(),
+        }
+    }
+
+    fn head_to_variant_id(operation: &HeadOperation) -> u8 {
+        use HeadOperation::*;
+        match operation {
+            Creation { .. } => 0,
+            NameUpdate { .. } => 1,
+            DescriptionUpdate { .. } => 2,
+            CompletedUpdate { .. } => 3,
+            Deletion { .. } => 4,
+        }
+    }
+
+    fn item_to_payload(operation: &ItemOperation) -> Vec<u8> {
+        use ItemOperation::*;
+        match operation {
+            Creation { name, position, .. } => {
+                let mut bytes = Self::str_to_vec_u8(name);
+                bytes.extend(position.as_bytes());
+
+                bytes
+            },
+            NameUpdate { name, ..} => {
+                Self::str_to_vec_u8(name)
+            },
+            PositionUpdate {position, .. } => {
+                position.as_bytes().into()
+            },
+            CheckedUpdate { checked, ..} => {
+                vec![checked.clone() as u8,]
+            },
+            Deletion { .. }  => Vec::new(),
+        }
+    }
+
+    fn item_to_variant_id(operation: &ItemOperation) -> u8 {
+        use ItemOperation::*;
+        match operation {
+            Creation { .. } => 0,
+            NameUpdate { .. } => 1,
+            PositionUpdate { .. } => 2,
+            CheckedUpdate { .. } => 3,
+            Deletion { .. } => 4,
+        }
+    }
+
+    fn usize_from_payload(payload: &[u8]) -> (usize, usize) {
+        let mask: u8 = 1<<7 - 1;
+        let mut bytes = 0;
+        let mut num = 0;
+
+        for byte in payload {
+            let value = (*byte&mask) as usize;
+            num += value << (bytes*7);
+            bytes += 1;
+            
+            if byte>>7 == 0 {
+                break
+            }
+        }
+
+        (bytes, num)
+    }
+
+    fn sqlite_row_to_head_operation(row: SqliteRow) -> Result<HeadOperation, StorageError> {
+        let id_bytes: &[u8] = row.try_get("id")
+            .or_raise(|| StorageError::backend_specific(""))?;
+        let id = Uuid::from_slice(id_bytes)
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let history_bytes: &[u8] = row.try_get("history")
+            .or_raise(|| StorageError::backend_specific(""))?;
+        let history = EventTree::try_from(history_bytes)
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let variant: u8 = row.try_get("variant")
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let associated_id_bytes: &[u8] = row.try_get("associated_id")
+            .or_raise(|| StorageError::backend_specific(""))?;
+        let associated_id = if associated_id_bytes.len() != 0 {
+            Some(Uuid::from_slice(associated_id_bytes)
+                .or_raise(|| StorageError::backend_specific(""))?)
+        } else {
+            None
+        };
+
+        let payload: &[u8] = row.try_get("payload")
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        match variant {
+            0 => {
+                let (name_offset, name_length) = Self::usize_from_payload(payload);
+                let name_slice = payload.get(name_offset..(name_offset+name_length))
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let name = String::from_utf8(name_slice.to_vec())
+                    .or_raise(|| StorageError::backend_specific(""))?;
+
+                let desc_length_slice = payload.get((name_offset+name_length)..) 
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let (mut desc_offset, desc_length) = Self::usize_from_payload(desc_length_slice);
+                desc_offset += name_offset+name_length;
+
+                let description = if desc_length != 0 {
+                    let desc_slice = payload.get(desc_offset..(desc_length+desc_offset))
+                        .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    Some(String::from_utf8(desc_slice.to_vec())
+                        .or_raise(|| StorageError::backend_specific(""))?)
+                } else {
+                    None
+                };
+
+                Ok(HeadOperation::Creation { id, history, template_id: associated_id, name, description })
+            },
+            1 => {
+                let head_id = associated_id
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+
+                let (offset, name_length) = Self::usize_from_payload(payload);
+                let name_slice = payload.get(offset..(name_length+offset))
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let name = String::from_utf8(name_slice.to_vec())
+                    .or_raise(|| StorageError::backend_specific(""))?;
+
+                Ok(HeadOperation::NameUpdate { id, history, head_id, name })
+            },
+            2 => {
+                let head_id = associated_id
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+
+                let (desc_offset, desc_length) = Self::usize_from_payload(payload);
+
+                let description = if desc_length != 0 {
+                    let desc_slice = payload.get(desc_offset..(desc_length+desc_offset))
+                        .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    Some(String::from_utf8(desc_slice.to_vec())
+                        .or_raise(|| StorageError::backend_specific(""))?)
+                } else {
+                    None
+                };
+
+                Ok(HeadOperation::DescriptionUpdate { id, history, head_id, description })
+            },
+            3 => {
+                let head_id = associated_id
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+
+                let completed = payload.get(0)
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let completed = *completed == 1;
+
+                Ok(HeadOperation::CompletedUpdate { id, history, head_id, completed })
+            },
+            4 => {
+                let head_id = associated_id
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+
+                Ok(HeadOperation::Deletion { id, history, head_id })
+            },
+            _ => bail!(StorageError::backend_specific(""))
+        }
+    }
+
+    fn sqlite_row_to_item_operation(row: SqliteRow) -> Result<ItemOperation, StorageError> {
+        let id_bytes: &[u8] = row.try_get("id")
+            .or_raise(|| StorageError::backend_specific(""))?;
+        let id = Uuid::from_slice(id_bytes)
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let history_bytes: &[u8] = row.try_get("history")
+            .or_raise(|| StorageError::backend_specific(""))?;
+        let history = EventTree::try_from(history_bytes)
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let variant: u8 = row.try_get("variant")
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let associated_id_bytes: &[u8] = row.try_get("associated_id")
+            .or_raise(|| StorageError::backend_specific(""))?;
+        let associated_id = Uuid::from_slice(associated_id_bytes)
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        let payload: &[u8] = row.try_get("payload")
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        match variant {
+            0 => {
+                let (offset, name_length) = Self::usize_from_payload(payload);
+                let name_slice = payload.get(offset..(offset+name_length))
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let name = String::from_utf8(name_slice.to_vec())
+                    .or_raise(|| StorageError::backend_specific(""))?;
+
+                let position_slice = payload.get(offset+name_length..)
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let position = FractionalIndex::from_bytes(position_slice.to_vec());
+
+                Ok(ItemOperation::Creation { id, history, head_id: associated_id, name, position })
+            },
+            1 => {
+                let (offset, name_length) = Self::usize_from_payload(payload);
+                let name_slice = payload.get(offset..(offset+name_length))
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let name = String::from_utf8(name_slice.to_vec())
+                    .or_raise(|| StorageError::backend_specific(""))?;
+
+                Ok(ItemOperation::NameUpdate { id, history, item_id: associated_id, name })
+            },
+            2 => {
+                let position = FractionalIndex::from_bytes(payload.to_vec());
+
+                Ok(ItemOperation::PositionUpdate { id, history, item_id: associated_id, position })
+            },
+            3 => {
+                let checked = payload.get(0)
+                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let checked = *checked == 1;
+
+                Ok(ItemOperation::CheckedUpdate { id, history, item_id: associated_id, checked })
+            },
+            4 => {
+                Ok(ItemOperation::Deletion { id, history, item_id: associated_id })
+            },
+            _ => bail!(StorageError::backend_specific(""))
+        }
+    }
+}
+
+impl<B: BlockOn> Store for SqliteStorage<B> {
+    fn start_transaction(&mut self) -> Result<bool, StorageError> {
+        if self.transaction.is_some() {
+            return Ok(false)
+        }
+
+        self.transaction = Some(self.executor.block_on(
+                self.sqlite_pool.begin()
+            )
+            .or_raise(|| StorageError::backend_specific(""))?);
+        Ok(true)
+    }
+
+    fn abort_transaction(&mut self) -> Result<bool, StorageError> {
+        if let Some(transaction) = self.transaction.take() {
+            self.executor.block_on(
+                    transaction.rollback()
+                )
+                .or_raise(|| StorageError::backend_specific(""))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn commit_transaction(&mut self) -> Result<bool, StorageError> {
+        if let Some(transaction) = self.transaction.take() {
+            self.executor.block_on(
+                    transaction.commit()
+                )
+                .or_raise(|| StorageError::backend_specific(""))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError> {
+        let query = sqlx::query(
+                r#"
+                    INSERT INTO stamp (id, stamp)
+                    VALUES (0, ?)
+                    ON CONFLICT(ID)
+                    DO UPDATE SET stamp = excluded.stamp
+                "#
+            )
+            .bind(Into::<Box<[u8]>>::into(stamp));
+
+        let _ = self.executor.block_on(
+                query
+                    .execute(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+    
+        Ok(())
+    }
+
+    fn load_stamp(&mut self) -> Result<Stamp, StorageError> {
+        let query = sqlx::query(
+                r#"
+                    SELECT stamp
+                    FROM stamp
+                    WHERE id = 0
+                "#
+            );
+
+        let row = self.executor.block_on(
+                query
+                    .fetch_optional(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?
+            .ok_or_raise(|| StorageError::stamp_none(""))?;
+
+        let stamp_slice: &[u8] = row.try_get("payload")
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        Stamp::try_from(stamp_slice)
+            .or_raise(|| StorageError::stamp_invalid(""))
+    }
+
+    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
+        let query = sqlx::query(
+                r#"
+                    INSERT INTO head_operation
+                    (id, history, secondary_id, variant, payload)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                "#
+            )
+            .bind(operation.id().as_bytes().as_slice())
+            .bind(Into::<Box<[u8]>>::into(operation.history()))
+            .bind(operation.head_id().as_bytes().as_slice())
+            .bind(Self::head_to_variant_id(&operation))
+            .bind(Self::head_to_payload(&operation));
+
+        let _ = self.executor.block_on(
+                query
+                    .execute(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        Ok(())
+    }
+
+    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
+        let query = sqlx::query(
+                r#"
+                    SELECT id, history, secondary_id, variant, payload
+                    FROM head_operation
+                "#
+            );
+            
+        let row = self.executor.block_on(
+            query
+                    .fetch_all(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        row.into_iter()
+            .map(|row| Self::sqlite_row_to_head_operation(row))
+            .collect()
+    }
+
+    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+        let query = sqlx::query(
+                r#"
+                    SELECT id, history, secondary_id, variant, payload
+                    FROM head_operation
+                    WHERE secondary_id = ?
+                "#
+            )
+            .bind(head_id.as_bytes().as_slice());
+            
+        let row = self.executor.block_on(
+            query
+                    .fetch_all(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        row.into_iter()
+            .map(|row| Self::sqlite_row_to_head_operation(row))
+            .collect()
+    }
+
+    fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
+        let query = sqlx::query(
+                r#"
+                    DELETE FROM head_operation
+                    WHERE ID = ?
+                    RETURNING id, history, secondary_id, variant, payload
+                "#
+            )
+            .bind(id.as_bytes().as_slice());
+
+        let row = self.executor.block_on(
+                query
+                    .fetch_optional(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?
+            .ok_or_raise(|| StorageError::backend_specific(""))?;
+
+        Self::sqlite_row_to_head_operation(row)
+    }
+
+    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError> {
+        let query = sqlx::query(
+                r#"
+                    INSERT INTO head_operation
+                    (id, history, secondary_id, variant, payload)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                "#
+            )
+            .bind(operation.id().as_bytes().as_slice())
+            .bind(Into::<Box<[u8]>>::into(operation.history()))
+            .bind(operation.item_id().as_bytes().as_slice())
+            .bind(Self::item_to_variant_id(&operation))
+            .bind(Self::item_to_payload(&operation));
+
+        let _ = self.executor.block_on(
+                query
+                    .execute(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        Ok(())
+    }
+
+    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
+        let query = sqlx::query(
+                r#"
+                   SELECT id, history, secondary_id, variant, payload
+                   FROM item_operation
+                "#
+            );
+            
+        let row = self.executor.block_on(
+            query
+                    .fetch_all(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        row.into_iter()
+            .map(|row| Self::sqlite_row_to_item_operation(row))
+            .collect()
+    }
+
+    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
+        let query = sqlx::query(
+                r#"
+                    SELECT id, history, secondary_id, variant, payload
+                    FROM item_operation
+                    WHERE ID = ?
+                "#
+            )
+            .bind(item_id.as_bytes().as_slice());
+            
+        let row = self.executor.block_on(
+            query
+                    .fetch_all(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?;
+
+        row.into_iter()
+            .map(|row| Self::sqlite_row_to_item_operation(row))
+            .collect()
+    }
+
+    fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
+        let query = sqlx::query(
+                r#"
+                    DELETE FROM item_operation
+                    WHERE ID = ?
+                    RETURNING id, history, secondary_id, variant, payload
+                "#
+            )
+            .bind(id.as_bytes().as_slice());
+
+        let row = self.executor.block_on(
+                query
+                    .fetch_optional(&self.sqlite_pool)
+            )
+            .or_raise(|| StorageError::backend_specific(""))?
+            .ok_or_raise(|| StorageError::backend_specific(""))?;
+
+        Self::sqlite_row_to_item_operation(row)
+    }
+}
