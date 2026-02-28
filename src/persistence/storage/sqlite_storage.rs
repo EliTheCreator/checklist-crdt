@@ -26,48 +26,49 @@ impl<B: BlockOn> SqliteStorage<B> {
     pub fn new(sqlite_pool: SqlitePool, executor: B) -> Result<Self, StorageError> {
         let _ = executor.block_on(
             sqlx::query(
-                    r#"
-                        CREATE TABLE IF NOT EXISTS stamp (
-                            id INTEGER PRIMARY KEY NOT CHECK (id = 0),
-                            stamp BLOB NOT NULL,
-                        ) WITHOUT ROWID;
-                        "#
-                    )
+                r#"
+                    CREATE TABLE IF NOT EXISTS stamp (
+                        id INTEGER PRIMARY KEY CHECK (id = 0),
+                        stamp BLOB NOT NULL
+                    ) WITHOUT ROWID;
+                    "#
+                )
                     .execute(&sqlite_pool)
             )
             .or_raise(|| StorageError::backend_specific("failed to create stamp table"))?;
 
         let _ = executor.block_on(
             sqlx::query(
-                    r#"
-                        CREATE TABLE IF NOT EXISTS head_operation (
-                            id BLOB PRIMARY KEY NOT NULL,
-                            history BLOB NOT NULL,
-                            secondary_id BLOB NOT NULL,
-                            variant INTEGER NOT NULL,
-                            payload BLOB NOT NULL
-                        ) WITHOUT ROWID;
-                        "#
-                    )
+                r#"
+                    CREATE TABLE IF NOT EXISTS head_operation (
+                        id BLOB PRIMARY KEY NOT NULL,
+                        history BLOB NOT NULL,
+                        secondary_id BLOB NOT NULL,
+                        variant INTEGER NOT NULL,
+                        payload BLOB NOT NULL
+                    ) WITHOUT ROWID;
+                    "#
+                )
                     .execute(&sqlite_pool)
             )
             .or_raise(|| StorageError::backend_specific("failed to create head_operation table"))?;
 
         let _ = executor.block_on(
             sqlx::query(
-                    r#"
-                        CREATE TABLE IF NOT EXISTS item_operation (
-                            id BLOB PRIMARY KEY NOT NULL,
-                            history BLOB NOT NULL,
-                            secondary_id BLOB NOT NULL,
-                            variant INTEGER NOT NULL,
-                            payload BLOB NOT NULL
-                        ) WITHOUT ROWID;
-                        "#
-                    )
+                r#"
+                    CREATE TABLE IF NOT EXISTS item_operation (
+                        id BLOB PRIMARY KEY NOT NULL,
+                        history BLOB NOT NULL,
+                        secondary_id BLOB NOT NULL,
+                        variant INTEGER NOT NULL,
+                        payload BLOB NOT NULL
+                    ) WITHOUT ROWID;
+                    "#
+                )
                     .execute(&sqlite_pool)
             )
             .or_raise(|| StorageError::backend_specific("failed to create item_operation table"))?;
+
     }
 
     fn usize_to_vec_u8(mut num: usize) -> Vec<u8> {
@@ -172,7 +173,7 @@ impl<B: BlockOn> SqliteStorage<B> {
             let value = (*byte&mask) as usize;
             num += value << (bytes*7);
             bytes += 1;
-            
+
             if byte>>7 == 0 {
                 break
             }
@@ -375,7 +376,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
             self.executor.block_on(
                     transaction.commit()
                 )
-                .or_raise(|| StorageError::backend_specific(""))?;
+                .or_raise(|| StorageError::backend_specific("failed to commit transaction"))?;
             Ok(true)
         } else {
             Ok(false)
@@ -398,7 +399,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                     .execute(&self.sqlite_pool)
             )
             .or_raise(|| StorageError::backend_specific("failed to save stamp"))?;
-    
+
         Ok(())
     }
 
@@ -422,7 +423,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'stamp' field"))?;
 
         Stamp::try_from(stamp_slice)
-            .or_raise(|| StorageError::stamp_invalid(""))
+            .or_raise(|| StorageError::stamp_invalid("unable to parse stamp"))
     }
 
     fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
@@ -456,7 +457,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                     FROM head_operation
                 "#
             );
-            
+
         let row = self.executor.block_on(
             query
                     .fetch_all(&self.sqlite_pool)
@@ -477,7 +478,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                 "#
             )
             .bind(head_id.as_bytes().as_slice());
-            
+
         let row = self.executor.block_on(
             query
                     .fetch_all(&self.sqlite_pool)
@@ -528,7 +529,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                 query
                     .execute(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to save item operation"))?;
 
         Ok(())
     }
@@ -540,7 +541,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                    FROM item_operation
                 "#
             );
-            
+
         let row = self.executor.block_on(
             query
                     .fetch_all(&self.sqlite_pool)
@@ -561,7 +562,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                 "#
             )
             .bind(item_id.as_bytes().as_slice());
-            
+
         let row = self.executor.block_on(
             query
                     .fetch_all(&self.sqlite_pool)
