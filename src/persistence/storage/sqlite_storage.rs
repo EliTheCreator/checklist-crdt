@@ -2,8 +2,9 @@ use core::future::Future;
 use exn::{OptionExt, Result, ResultExt, bail};
 use itc::{EventTree, Stamp};
 use loro_fractional_index::FractionalIndex;
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
-use sqlx::sqlite::{SqlitePoolOptions, SqliteRow};
+use sqlx::pool::PoolConnection;
+use sqlx::{Connection, Row, Sqlite, Transaction};
+use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 
 use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
@@ -17,13 +18,13 @@ pub trait BlockOn {
 
 
 pub struct SqliteStorage<'a, B: BlockOn> {
-    sqlite_pool: SqlitePool,
-    executor: B,
+    executor: &'a B,
+    sqlite_connection: &'a mut PoolConnection<Sqlite>,
     transaction: Option<Transaction<'a, Sqlite>>
 }
 
 impl<'a, B: BlockOn> SqliteStorage<'a, B> {
-    pub fn new(sqlite_pool: SqlitePool, executor: B) -> Result<Self, StorageError> {
+    pub fn new(sqlite_connection: &'a mut PoolConnection<Sqlite>, executor: &'a B) -> Result<Self, StorageError> {
         let _ = executor.block_on(
             sqlx::query(
                 r#"
@@ -33,7 +34,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                     ) WITHOUT ROWID;
                     "#
                 )
-                    .execute(&sqlite_pool)
+                .execute(&mut **sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to create stamp table"))?;
 
@@ -49,7 +50,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                     ) WITHOUT ROWID;
                     "#
                 )
-                    .execute(&sqlite_pool)
+                .execute(&mut **sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to create head_operation table"))?;
 
@@ -65,10 +66,11 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                     ) WITHOUT ROWID;
                     "#
                 )
-                    .execute(&sqlite_pool)
+                .execute(&mut **sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to create item_operation table"))?;
 
+        Ok(Self { executor, sqlite_connection, transaction: None })
     }
 
     fn usize_to_vec_u8(mut num: usize) -> Vec<u8> {
@@ -353,7 +355,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         }
 
         self.transaction = Some(self.executor.block_on(
-                self.sqlite_pool.begin()
+                self.sqlite_connection.begin()
             )
             .or_raise(|| StorageError::backend_specific("failed to start transaction"))?);
         Ok(true)
@@ -396,7 +398,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let _ = self.executor.block_on(
                 query
-                    .execute(&self.sqlite_pool)
+                    .execute(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to save stamp"))?;
 
@@ -414,7 +416,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let row = self.executor.block_on(
                 query
-                    .fetch_optional(&self.sqlite_pool)
+                    .fetch_optional(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to load stamp"))?
             .ok_or_raise(|| StorageError::stamp_none("expected stamp record, found none"))?;
@@ -443,7 +445,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let _ = self.executor.block_on(
                 query
-                    .execute(&self.sqlite_pool)
+                    .execute(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed save head operation"))?;
 
@@ -460,7 +462,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let row = self.executor.block_on(
             query
-                    .fetch_all(&self.sqlite_pool)
+                    .fetch_all(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed load head operations"))?;
 
@@ -481,7 +483,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let row = self.executor.block_on(
             query
-                    .fetch_all(&self.sqlite_pool)
+                    .fetch_all(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed load head operations"))?;
 
@@ -502,7 +504,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let row = self.executor.block_on(
                 query
-                    .fetch_optional(&self.sqlite_pool)
+                    .fetch_optional(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to delete head operation"))?
             .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))?;
@@ -527,7 +529,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let _ = self.executor.block_on(
                 query
-                    .execute(&self.sqlite_pool)
+                    .execute(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to save item operation"))?;
 
@@ -544,7 +546,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let row = self.executor.block_on(
             query
-                    .fetch_all(&self.sqlite_pool)
+                    .fetch_all(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("expected record, found none"))?;
 
@@ -565,7 +567,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let row = self.executor.block_on(
             query
-                    .fetch_all(&self.sqlite_pool)
+                    .fetch_all(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to load item operations"))?;
 
@@ -586,7 +588,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
         let row = self.executor.block_on(
                 query
-                    .fetch_optional(&self.sqlite_pool)
+                    .fetch_optional(&mut **self.sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to delete item operation"))?
             .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))?;
