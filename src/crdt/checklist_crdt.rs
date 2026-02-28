@@ -12,7 +12,6 @@ use crate::persistence::{StorageError, ErrorKind};
 use crate::persistence::storage::Store;
 
 
-#[macro_export]
 macro_rules! transaction {
     ($this:expr, $stamp:expr, $body:block) => {{
         $this.storage
