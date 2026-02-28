@@ -35,7 +35,7 @@ impl<B: BlockOn> SqliteStorage<B> {
                     )
                     .execute(&sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to create stamp table"))?;
 
         let _ = executor.block_on(
             sqlx::query(
@@ -51,7 +51,7 @@ impl<B: BlockOn> SqliteStorage<B> {
                     )
                     .execute(&sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to create head_operation table"))?;
 
         let _ = executor.block_on(
             sqlx::query(
@@ -67,19 +67,7 @@ impl<B: BlockOn> SqliteStorage<B> {
                     )
                     .execute(&sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
-
-        Ok(Self { sqlite_pool, executor, transaction: None })
-    }
-
-    pub fn new_inmemory(executor: B) -> Result<Self, StorageError> {
-        let sqlite_pool = executor.block_on(
-            SqlitePoolOptions::new()
-                    .connect("sqlite::memory")
-            )
-            .or_raise(|| StorageError::backend_specific(""))?;
-
-        Self::new(sqlite_pool, executor)
+            .or_raise(|| StorageError::backend_specific("failed to create item_operation table"))?;
     }
 
     fn usize_to_vec_u8(mut num: usize) -> Vec<u8> {
@@ -195,48 +183,48 @@ impl<B: BlockOn> SqliteStorage<B> {
 
     fn sqlite_row_to_head_operation(row: SqliteRow) -> Result<HeadOperation, StorageError> {
         let id_bytes: &[u8] = row.try_get("id")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
         let id = Uuid::from_slice(id_bytes)
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
 
         let history_bytes: &[u8] = row.try_get("history")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'history' field"))?;
         let history = EventTree::try_from(history_bytes)
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::data_decode("unable to decode event tree"))?;
 
         let variant: u8 = row.try_get("variant")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'variant' field"))?;
 
         let associated_id_bytes: &[u8] = row.try_get("associated_id")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'associated_id' field"))?;
         let associated_id = if associated_id_bytes.len() != 0 {
             Some(Uuid::from_slice(associated_id_bytes)
-                .or_raise(|| StorageError::backend_specific(""))?)
+                .or_raise(|| StorageError::data_decode("unable to decode uuid"))?)
         } else {
             None
         };
 
         let payload: &[u8] = row.try_get("payload")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'payload' field"))?;
 
         match variant {
             0 => {
                 let (name_offset, name_length) = Self::usize_from_payload(payload);
                 let name_slice = payload.get(name_offset..(name_offset+name_length))
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::backend_specific(""))?;
+                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
 
-                let desc_length_slice = payload.get((name_offset+name_length)..) 
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                let desc_length_slice = payload.get((name_offset+name_length)..)
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let (mut desc_offset, desc_length) = Self::usize_from_payload(desc_length_slice);
                 desc_offset += name_offset+name_length;
 
                 let description = if desc_length != 0 {
                     let desc_slice = payload.get(desc_offset..(desc_length+desc_offset))
-                        .ok_or_raise(|| StorageError::backend_specific(""))?;
+                        .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                     Some(String::from_utf8(desc_slice.to_vec())
-                        .or_raise(|| StorageError::backend_specific(""))?)
+                        .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?)
                 } else {
                     None
                 };
@@ -245,27 +233,27 @@ impl<B: BlockOn> SqliteStorage<B> {
             },
             1 => {
                 let head_id = associated_id
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
 
                 let (offset, name_length) = Self::usize_from_payload(payload);
                 let name_slice = payload.get(offset..(name_length+offset))
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::backend_specific(""))?;
+                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
 
                 Ok(HeadOperation::NameUpdate { id, history, head_id, name })
             },
             2 => {
                 let head_id = associated_id
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
 
                 let (desc_offset, desc_length) = Self::usize_from_payload(payload);
 
                 let description = if desc_length != 0 {
                     let desc_slice = payload.get(desc_offset..(desc_length+desc_offset))
-                        .ok_or_raise(|| StorageError::backend_specific(""))?;
+                        .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                     Some(String::from_utf8(desc_slice.to_vec())
-                        .or_raise(|| StorageError::backend_specific(""))?)
+                        .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?)
                 } else {
                     None
                 };
@@ -274,56 +262,56 @@ impl<B: BlockOn> SqliteStorage<B> {
             },
             3 => {
                 let head_id = associated_id
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
 
                 let completed = payload.get(0)
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let completed = *completed == 1;
 
                 Ok(HeadOperation::CompletedUpdate { id, history, head_id, completed })
             },
             4 => {
                 let head_id = associated_id
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
 
                 Ok(HeadOperation::Deletion { id, history, head_id })
             },
-            _ => bail!(StorageError::backend_specific(""))
+            _ => bail!(StorageError::data_decode("encountered unknown head operation kind"))
         }
     }
 
     fn sqlite_row_to_item_operation(row: SqliteRow) -> Result<ItemOperation, StorageError> {
         let id_bytes: &[u8] = row.try_get("id")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
         let id = Uuid::from_slice(id_bytes)
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
 
         let history_bytes: &[u8] = row.try_get("history")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'history' field"))?;
         let history = EventTree::try_from(history_bytes)
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::data_decode("unable to decode event tree"))?;
 
         let variant: u8 = row.try_get("variant")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'variant' field"))?;
 
         let associated_id_bytes: &[u8] = row.try_get("associated_id")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'associated_id' field"))?;
         let associated_id = Uuid::from_slice(associated_id_bytes)
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
 
         let payload: &[u8] = row.try_get("payload")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'payload' field"))?;
 
         match variant {
             0 => {
                 let (offset, name_length) = Self::usize_from_payload(payload);
                 let name_slice = payload.get(offset..(offset+name_length))
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::backend_specific(""))?;
+                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
 
                 let position_slice = payload.get(offset+name_length..)
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let position = FractionalIndex::from_bytes(position_slice.to_vec());
 
                 Ok(ItemOperation::Creation { id, history, head_id: associated_id, name, position })
@@ -331,9 +319,9 @@ impl<B: BlockOn> SqliteStorage<B> {
             1 => {
                 let (offset, name_length) = Self::usize_from_payload(payload);
                 let name_slice = payload.get(offset..(offset+name_length))
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::backend_specific(""))?;
+                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
 
                 Ok(ItemOperation::NameUpdate { id, history, item_id: associated_id, name })
             },
@@ -344,7 +332,7 @@ impl<B: BlockOn> SqliteStorage<B> {
             },
             3 => {
                 let checked = payload.get(0)
-                    .ok_or_raise(|| StorageError::backend_specific(""))?;
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let checked = *checked == 1;
 
                 Ok(ItemOperation::CheckedUpdate { id, history, item_id: associated_id, checked })
@@ -352,7 +340,7 @@ impl<B: BlockOn> SqliteStorage<B> {
             4 => {
                 Ok(ItemOperation::Deletion { id, history, item_id: associated_id })
             },
-            _ => bail!(StorageError::backend_specific(""))
+            _ => bail!(StorageError::data_decode("encountered unknown item operation kind"))
         }
     }
 }
@@ -366,7 +354,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
         self.transaction = Some(self.executor.block_on(
                 self.sqlite_pool.begin()
             )
-            .or_raise(|| StorageError::backend_specific(""))?);
+            .or_raise(|| StorageError::backend_specific("failed to start transaction"))?);
         Ok(true)
     }
 
@@ -375,7 +363,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
             self.executor.block_on(
                     transaction.rollback()
                 )
-                .or_raise(|| StorageError::backend_specific(""))?;
+                .or_raise(|| StorageError::transaction_rollback_partial("failed to abort transaction"))?;
             Ok(true)
         } else {
             Ok(false)
@@ -409,7 +397,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                 query
                     .execute(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to save stamp"))?;
     
         Ok(())
     }
@@ -427,11 +415,11 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                 query
                     .fetch_optional(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?
-            .ok_or_raise(|| StorageError::stamp_none(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to load stamp"))?
+            .ok_or_raise(|| StorageError::stamp_none("expected stamp record, found none"))?;
 
         let stamp_slice: &[u8] = row.try_get("payload")
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'stamp' field"))?;
 
         Stamp::try_from(stamp_slice)
             .or_raise(|| StorageError::stamp_invalid(""))
@@ -456,7 +444,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                 query
                     .execute(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed save head operation"))?;
 
         Ok(())
     }
@@ -473,7 +461,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
             query
                     .fetch_all(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed load head operations"))?;
 
         row.into_iter()
             .map(|row| Self::sqlite_row_to_head_operation(row))
@@ -494,7 +482,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
             query
                     .fetch_all(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed load head operations"))?;
 
         row.into_iter()
             .map(|row| Self::sqlite_row_to_head_operation(row))
@@ -515,8 +503,8 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                 query
                     .fetch_optional(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?
-            .ok_or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to delete head operation"))?
+            .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))?;
 
         Self::sqlite_row_to_head_operation(row)
     }
@@ -557,7 +545,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
             query
                     .fetch_all(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("expected record, found none"))?;
 
         row.into_iter()
             .map(|row| Self::sqlite_row_to_item_operation(row))
@@ -578,7 +566,7 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
             query
                     .fetch_all(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to load item operations"))?;
 
         row.into_iter()
             .map(|row| Self::sqlite_row_to_item_operation(row))
@@ -599,8 +587,8 @@ impl<B: BlockOn> Store for SqliteStorage<B> {
                 query
                     .fetch_optional(&self.sqlite_pool)
             )
-            .or_raise(|| StorageError::backend_specific(""))?
-            .ok_or_raise(|| StorageError::backend_specific(""))?;
+            .or_raise(|| StorageError::backend_specific("failed to delete item operation"))?
+            .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))?;
 
         Self::sqlite_row_to_item_operation(row)
     }
