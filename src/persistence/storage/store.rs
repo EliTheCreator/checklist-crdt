@@ -6,8 +6,8 @@ use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::storage_error::StorageError;
 
 
-pub trait Store {
-    fn start_transaction(&mut self) -> Result<bool, StorageError>;
+pub trait Store<'a> {
+    fn start_transaction(&'a mut self) -> Result<bool, StorageError>;
     fn abort_transaction(&mut self) -> Result<bool, StorageError>;
     fn commit_transaction(&mut self) -> Result<bool, StorageError>;
 

@@ -52,12 +52,12 @@ impl ChecklistOperations {
 }
 
 
-pub struct ChecklistCrdt<S: Store> {
+pub struct ChecklistCrdt<S: for<'a> Store<'a>> {
     storage: S,
     itc_stamp: Stamp
 }
 
-impl<S: Store> ChecklistCrdt<S> {
+impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     pub fn new(mut storage: S) -> Result<Self, CrdtError> {
         let stamp = match storage.load_stamp() {
             Ok(s) => s,
@@ -369,7 +369,7 @@ impl<S: Store> ChecklistCrdt<S> {
     }
 }
 
-impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
+impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
     fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
         let mut head_operations = self.get_heads()?;
         head_operations.retain(|head| {

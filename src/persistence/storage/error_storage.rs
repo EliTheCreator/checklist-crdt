@@ -9,7 +9,7 @@ use super::store::Store;
 
 pub struct ErrorStorage;
 
-impl Store for ErrorStorage {
+impl Store<'_> for ErrorStorage {
     fn start_transaction(&mut self) -> Result<bool, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }

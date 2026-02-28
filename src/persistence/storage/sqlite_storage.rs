@@ -16,13 +16,13 @@ pub trait BlockOn {
 }
 
 
-pub struct SqliteStorage<B: BlockOn> {
+pub struct SqliteStorage<'a, B: BlockOn> {
     sqlite_pool: SqlitePool,
     executor: B,
-    transaction: Option<Transaction<'static, Sqlite>>
+    transaction: Option<Transaction<'a, Sqlite>>
 }
 
-impl<B: BlockOn> SqliteStorage<B> {
+impl<'a, B: BlockOn> SqliteStorage<'a, B> {
     pub fn new(sqlite_pool: SqlitePool, executor: B) -> Result<Self, StorageError> {
         let _ = executor.block_on(
             sqlx::query(
@@ -346,8 +346,8 @@ impl<B: BlockOn> SqliteStorage<B> {
     }
 }
 
-impl<B: BlockOn> Store for SqliteStorage<B> {
-    fn start_transaction(&mut self) -> Result<bool, StorageError> {
+impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
+    fn start_transaction(&'a mut self) -> Result<bool, StorageError> {
         if self.transaction.is_some() {
             return Ok(false)
         }
