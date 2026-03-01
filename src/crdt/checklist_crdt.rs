@@ -5,7 +5,7 @@ use itc::{EventTree, IdTree, IntervalTreeClock, Stamp};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
-use crate::crdt::crdt::{Crdt, OperationDelta, ReplicaState};
+use crate::crdt::crdt::{Crdt, Mutation, OperationDelta, ReplicaState};
 use crate::crdt::crdt_error::CrdtError;
 use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
 use crate::persistence::{StorageError, ErrorKind};
@@ -49,6 +49,10 @@ impl ChecklistOperations {
         Self { head_operations, item_operations }
     }
 }
+
+
+type SingleMutation<T> = Mutation<Option<T>, Vec<T>>;
+type MultiMutation<T> = Mutation<T, T>;
 
 
 pub struct ChecklistCrdt<S: for<'a> Store<'a>> {
@@ -107,7 +111,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         }
     }
 
-    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), CrdtError> {
+    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<SingleMutation<HeadOperation>, CrdtError> {
         let associated_operations = self.storage
             .load_all_associated_head_operations(operation.head_id())
             .map_err(|e|
@@ -126,20 +130,23 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
                     match assoc_op.history().partial_cmp(operation.history()) {
                         Some(Ordering::Less) => obsolete_ops.push(assoc_op),
                         None if assoc_op.id() < operation.id() => obsolete_ops.push(assoc_op),
-                        _ => return Ok(()),
+                        _ => return Ok(Mutation::new(None, Vec::new())),
                     }
                 },
                 _ => (),
             }
         }
 
-        for obsolete_op in obsolete_ops {
-            self.erase_head_operation(obsolete_op.id())?;
-        }
+        let obsolete_ops = obsolete_ops.into_iter()
+            .map(|obsolete_op| self.erase_head_operation(obsolete_op.id()))
+            .collect::<Result<Vec<HeadOperation>, CrdtError>>()?;
 
+        let operation_clone = operation.clone();
         self.storage.save_head_operation(operation).map_err(|e|
             self.abort_transaction(e, "crdt unable to store head operation")
-        )
+        )?;
+
+        Ok(Mutation::new(Some(operation_clone), obsolete_ops))
     }
 
     fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, CrdtError> {
@@ -153,28 +160,25 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         template_id: Option<Uuid>,
         name: String,
         description: Option<String>
-    ) -> Result<Uuid, CrdtError> {
+    ) -> Result<SingleMutation<HeadOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let id = Uuid::now_v7();
         let operation = HeadOperation::Creation {
-            id: id.clone(),
+            id: id,
             history: stamp.history(),
             template_id: template_id,
             name: name,
             description: description,
         };
 
-        let _: Result<(), CrdtError> = transaction!(self, stamp, {
-            self.save_head_operation(operation)
-        });
-        Ok(id)
+        transaction!(self, stamp, { self.save_head_operation(operation) })
     }
 
     pub fn update_head_name(
         &mut self,
         head_id: &Uuid,
         name: String,
-    ) -> Result<(), CrdtError> {
+    ) -> Result<SingleMutation<HeadOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = HeadOperation::NameUpdate {
             id: Uuid::now_v7(),
@@ -190,7 +194,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         head_id: &Uuid,
         description: Option<String>,
-    ) -> Result<(), CrdtError> {
+    ) -> Result<SingleMutation<HeadOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = HeadOperation::DescriptionUpdate {
             id: Uuid::now_v7(),
@@ -206,7 +210,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         head_id: &Uuid,
         completed: bool,
-    ) -> Result<(), CrdtError> {
+    ) -> Result<SingleMutation<HeadOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = HeadOperation::CompletedUpdate {
             id: Uuid::now_v7(),
@@ -221,7 +225,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     pub fn delete_head(
         &mut self,
         head_id: &Uuid,
-    ) -> Result<(), CrdtError> {
+    ) -> Result<SingleMutation<HeadOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = HeadOperation::Deletion {
             id: Uuid::now_v7(),
@@ -237,7 +241,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
             .or_raise(|| CrdtError::recovered("crdt unable to load all head operations"))
     }
 
-    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), CrdtError> {
+    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<SingleMutation<ItemOperation>, CrdtError> {
         let associated_operations = self.storage
             .load_all_associated_item_operations(operation.item_id())
             .map_err(|e|
@@ -256,20 +260,23 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
                     match assoc_op.history().partial_cmp(operation.history()) {
                         Some(Ordering::Less) => obsolete_ops.push(assoc_op),
                         None if assoc_op.id() < operation.id() => obsolete_ops.push(assoc_op),
-                        _ => return Ok(()),
+                        _ => return Ok(Mutation::new(None, Vec::new())),
                     }
                 },
                 _ => (),
             }
         }
 
-        for obsolete_op in obsolete_ops {
-            self.erase_item_operation(obsolete_op.id())?;
-        }
+        let obsolete_ops = obsolete_ops.into_iter()
+            .map(|obsolete_op| self.erase_item_operation(obsolete_op.id()))
+            .collect::<Result<Vec<ItemOperation>, CrdtError>>()?;
 
+        let operation_clone = operation.clone();
         self.storage.save_item_operation(operation).map_err(|e|
             self.abort_transaction(e, "crdt unable to store item operation")
-        )
+        )?;
+
+        Ok(Mutation::new(Some(operation_clone), obsolete_ops))
     }
 
     fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, CrdtError> {
@@ -283,28 +290,25 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         head_id: Uuid,
         name: String,
         position: FractionalIndex,
-    ) -> Result<Uuid, CrdtError> {
+    ) -> Result<SingleMutation<ItemOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let id = Uuid::now_v7();
         let operation = ItemOperation::Creation {
-            id: id.clone(),
+            id: id,
             history: stamp.history(),
             head_id: head_id,
             name: name,
             position: position,
         };
 
-        let _: Result<(), CrdtError> = transaction!(self, stamp, {
-            self.save_item_operation(operation)
-        });
-        Ok(id)
+        transaction!(self, stamp, { self.save_item_operation(operation) })
     }
 
     pub fn update_item_name(
         &mut self,
         item_id: &Uuid,
         name: String,
-    ) -> Result<(), CrdtError> {
+    ) -> Result<SingleMutation<ItemOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = ItemOperation::NameUpdate {
             id: Uuid::now_v7(),
@@ -320,7 +324,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         item_id: &Uuid,
         position: FractionalIndex,
-    ) -> Result<(), CrdtError> {
+    ) -> Result<SingleMutation<ItemOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = ItemOperation::PositionUpdate {
             id: Uuid::now_v7(),
@@ -336,7 +340,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         item_id: &Uuid,
         checked: bool,
-    ) -> Result<(), CrdtError> {
+    ) -> Result<SingleMutation<ItemOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = ItemOperation::CheckedUpdate {
             id: Uuid::now_v7(),
@@ -351,7 +355,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     pub fn delete_item(
         &mut self,
         item_id: &Uuid,
-    ) -> Result<(), CrdtError> {
+    ) -> Result<SingleMutation<ItemOperation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation: ItemOperation = ItemOperation::Deletion {
             id: Uuid::now_v7(),
@@ -392,7 +396,10 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
         Ok(OperationDelta::new(history, local_history, operations))
     }
 
-    fn apply_delta(&mut self, delta: OperationDelta<ChecklistOperations>) -> Result<(), CrdtError> {
+    fn apply_delta(
+        &mut self,
+        delta: OperationDelta<ChecklistOperations>,
+    ) -> Result<MultiMutation<ChecklistOperations>, CrdtError> {
         if !delta.is_applicable_to(&self.itc_stamp.history()) {
             bail!(CrdtError::causal_gap(concat!(
                 "causal gap between local and base history deteceted. this may lead to lost ",
@@ -420,19 +427,41 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
         Ok(ReplicaState::new(replica_stamp, delta))
     }
 
-    fn join(&mut self, replica_state: ReplicaState<ChecklistOperations>) -> Result<(), CrdtError> {
+    fn join(
+        &mut self,
+        replica_state: ReplicaState<ChecklistOperations>,
+    ) -> Result<MultiMutation<ChecklistOperations>, CrdtError> {
         let stamp = self.itc_stamp.join(&replica_state.stamp).event();
 
         transaction!(self, stamp, {
+            let mut add_head_operations = Vec::new();
+            let mut remove_head_operations = Vec::new();
             for operation in replica_state.delta.operations.head_operations {
-                self.save_head_operation(operation)?;
+                let (add, remove) = self.save_head_operation(operation)?.destruct();
+                add_head_operations.push(add);
+                remove_head_operations.extend(remove);
             }
 
+            let add_head_operations = add_head_operations.into_iter()
+                .flatten()
+                .collect();
+
+            let mut add_item_operations = Vec::new();
+            let mut remove_item_operations = Vec::new();
             for operation in replica_state.delta.operations.item_operations {
-                self.save_item_operation(operation)?;
+                let (add, remove) = self.save_item_operation(operation)?.destruct();
+                add_item_operations.push(add);
+                remove_item_operations.extend(remove);
             }
 
-            Ok(())
+            let add_item_operations = add_item_operations.into_iter()
+                .flatten()
+                .collect();
+
+            let add_operations = ChecklistOperations::new(add_head_operations, add_item_operations);
+            let remove_operations = ChecklistOperations::new(remove_head_operations, remove_item_operations);
+
+            Ok(Mutation::new(add_operations, remove_operations))
         })
     }
 }
@@ -483,10 +512,16 @@ mod test {
             InMemoryStorage::new(),
         ).unwrap();
 
-        let head_id = crdt_1.add_head(None, "A".into(), Some("ab c de".into())).unwrap();
+        let head_id = crdt_1
+            .add_head(None, "A".into(), Some("ab c de".into()))
+            .unwrap().add.unwrap().id().clone();
         let position = FractionalIndex::default();
-        let first = crdt_1.add_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
-        let second = crdt_1.add_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
+        let first = crdt_1
+            .add_item(head_id.clone(), "1.".into(), position.clone())
+            .unwrap().add.unwrap().id().clone();
+        let second = crdt_1
+            .add_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position))
+            .unwrap().add.unwrap().id().clone();
 
         let replica_data = crdt_1.fork().unwrap();
         let mut crdt_2 = ChecklistCrdt::new(
@@ -523,10 +558,16 @@ mod test {
         let storage_2 = FileStorage::new("stamp_2.txt", "head_2.txt", "item_2.txt").unwrap();
         let mut crdt_1 = ChecklistCrdt::new(storage_1).unwrap();
 
-        let head_id = crdt_1.add_head(None, "A".into(), Some("ab c de".into())).unwrap();
+        let head_id = crdt_1
+            .add_head(None, "A".into(), Some("ab c de".into()))
+            .unwrap().add.unwrap().id().clone();
         let position = FractionalIndex::default();
-        let first = crdt_1.add_item(head_id.clone(), "1.".into(), position.clone()).unwrap();
-        let second = crdt_1.add_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position)).unwrap();
+        let first = crdt_1
+            .add_item(head_id.clone(), "1.".into(), position.clone())
+            .unwrap().add.unwrap().id().clone();
+        let second = crdt_1
+            .add_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position))
+            .unwrap().add.unwrap().id().clone();
 
         let replica_data = crdt_1.fork().unwrap();
         let mut crdt_2 = ChecklistCrdt::new_from(storage_2, replica_data).unwrap();
