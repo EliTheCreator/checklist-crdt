@@ -56,6 +56,21 @@ impl Into<String> for &HeadOperation {
                     head_id,
                 )
             },
+            Tombstone { id, history, head_id, template_id, name, description, completed } => {
+                let description = description.clone().unwrap_or(String::new());
+                format!(
+                    "Tombstone {} {} {} {} {}:{} {}:{} {}\n",
+                    id,
+                    history,
+                    head_id,
+                    template_id.map_or(String::new(), |template_id| template_id.to_string()),
+                    name.matches(" ").count()+1,
+                    name,
+                    description.matches(" ").count()+1,
+                    description,
+                    completed,
+                )
+            },
         }
     }
 }

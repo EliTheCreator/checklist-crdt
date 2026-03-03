@@ -7,6 +7,7 @@ pub enum ErrorKind {
     BackendOpen,
     BackendRead,
     BackendWrite,
+    BackendDelete,
     BackendSpecific,
     DataDecode,
     DataEncode,
@@ -38,6 +39,10 @@ impl StorageError {
 
     pub fn backend_write(message: impl Into<String>) -> Self {
         Self { kind: ErrorKind::BackendWrite, message: message.into() }
+    }
+
+    pub fn backend_delete(message: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::BackendDelete, message: message.into() }
     }
 
     pub fn backend_specific(message: impl Into<String>) -> Self {
@@ -76,6 +81,7 @@ impl Display for StorageError {
             BackendOpen => write!(f, "backend open error: {}", self.message),
             BackendRead => write!(f, "backend read error: {}", self.message),
             BackendWrite => write!(f, "backend write error: {}", self.message),
+            BackendDelete => write!(f, "backend delete error: {}", self.message),
             BackendSpecific => write!(f, "backend specific error: {}", self.message),
             DataDecode => write!(f, "data decode error: {}", self.message),
             DataEncode => write!(f, "data encode error: {}", self.message),

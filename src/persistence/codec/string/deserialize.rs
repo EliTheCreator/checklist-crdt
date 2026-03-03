@@ -210,6 +210,20 @@ impl Parser {
         Ok(HeadOperation::Deletion { id, history, head_id })
     }
 
+    fn parse_head_tombstone(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
+        let (id, history) = Self::parse_operation_meta(iter)?;
+        let head_id = Self::parse_uuid(iter, "head id")?;
+        let template_id = Self::parse_optional_uuid(iter, "template id")?;
+
+        let name = Self::get_next_string(iter, "name")?;
+        let description = Some(Self::get_next_string(iter, "description")?)
+            .filter(|s| !s.is_empty());
+
+        let completed = Self::parse_bool(iter, "completed")?;
+
+        Ok(HeadOperation::Tombstone { id, history, head_id, template_id, name, description, completed })
+    }
+
     fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
@@ -269,6 +283,7 @@ impl TryFrom<&str> for HeadOperation {
             Some("DescriptionUpdate") => Parser::parse_head_description_update(&mut parts),
             Some("CompletedUpdate") => Parser::parse_head_completed_update(&mut parts),
             Some("Deletion") => Parser::parse_head_deletion(&mut parts),
+            Some("Tombstone") => Parser::parse_head_tombstone(&mut parts),
             Some(prefix) => Err(ParserError::invalid_prefix(format!("unexpected prefix '{}'", prefix))),
             None => Err(ParserError::no_data("no text found")),
         }
