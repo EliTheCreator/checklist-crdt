@@ -269,6 +269,22 @@ impl Parser {
 
         Ok(ItemOperation::Deletion { id, history, item_id })
     }
+
+    fn parse_item_tombstone(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
+        let (id, history) = Self::parse_operation_meta(iter)?;
+        let item_id = Self::parse_uuid(iter, "item id")?;
+        let head_id = Self::parse_uuid(iter, "head id")?;
+        
+
+        let name = Self::get_next_string(iter, "name")?;
+
+        let position = Self::get_next_str(iter, "position")?;
+        let position = FractionalIndex::from_hex_string(position);
+
+        let checked = Self::parse_bool(iter, "checked")?;
+
+        Ok(ItemOperation::Tombstone { id, history, head_id, item_id, name, position, checked })
+    }
 }
 
 
@@ -310,6 +326,7 @@ impl TryFrom<&str> for ItemOperation {
             Some("PositionUpdate") => Parser::parse_item_position_update(&mut parts),
             Some("CheckedUpdate") => Parser::parse_item_checked_update(&mut parts),
             Some("Deletion") => Parser::parse_item_deletion(&mut parts),
+            Some("Tombstone") => Parser::parse_item_tombstone(&mut parts),
             Some(prefix) => Err(ParserError::invalid_prefix(format!("unexpected prefix '{}'", prefix))),
             None => Err(ParserError::no_data("no text found")),
         }

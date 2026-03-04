@@ -132,6 +132,19 @@ impl Into<String> for &ItemOperation {
                     item_id,
                 )
             },
+            Tombstone { id, history, head_id, item_id, name, position, checked } => {
+                format!(
+                    "Deletion {} {} {} {} {}:{} {} {}\n",
+                    id,
+                    history,
+                    item_id,
+                    head_id,
+                    name.matches(" ").count()+1,
+                    name,
+                    position,
+                    checked,
+                )
+            }
         }
     }
 }

@@ -113,10 +113,20 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         let string_as_bytes = string.to_string().into_bytes();
         let length = string_as_bytes.len();
 
-        let mut length_as_bytes = Self::usize_to_vec_u8(length);
-        length_as_bytes.extend(string_as_bytes);
+        let mut bytes = Self::usize_to_vec_u8(length);
+        bytes.extend(string_as_bytes);
 
-        length_as_bytes
+        bytes
+    }
+
+    fn position_to_vec_u8(position: &FractionalIndex) -> Vec<u8> {
+        let position_as_bytes = position.as_bytes();
+        let length = position_as_bytes.len();
+
+        let mut bytes = Self::usize_to_vec_u8(length);
+        bytes.extend(position_as_bytes);
+
+        bytes
     }
 
     fn head_to_payload(operation: &HeadOperation) -> Vec<u8> {
@@ -195,6 +205,14 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                 vec![checked.clone() as u8,]
             },
             Deletion { .. }  => Vec::new(),
+            Tombstone { head_id, name, position, checked, .. } => {
+                let mut bytes = Vec::from(head_id.as_bytes());
+                bytes.extend(Self::str_to_vec_u8(name));
+                bytes.extend(Self::position_to_vec_u8(position));
+                bytes.push(checked.clone() as u8);
+
+                bytes
+            }
         }
     }
 
@@ -206,6 +224,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             PositionUpdate { .. } => 2,
             CheckedUpdate { .. } => 3,
             Deletion { .. } => 4,
+            Tombstone { .. } => 5,
         }
     }
 
@@ -430,6 +449,39 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             4 => {
                 Ok(ItemOperation::Deletion { id, history, item_id: associated_id })
             },
+            5 => {
+                let uuid_length: usize = 16;
+                let item_id_slice = payload.get(0..uuid_length)
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
+                let item_id= Uuid::from_slice(item_id_slice)
+                        .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+
+                let name_length_slice = payload.get(uuid_length..)
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
+                let (mut name_offset, name_length) = Self::usize_from_payload(name_length_slice);
+                name_offset += uuid_length;
+
+                let name_slice = payload.get(name_offset..(name_offset+name_length))
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
+                let name = String::from_utf8(name_slice.to_vec())
+                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
+
+                let position_length_slice = payload.get((name_offset+name_length)..)
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
+                let (mut position_offset, position_length) = Self::usize_from_payload(position_length_slice);
+                position_offset += name_offset+name_length;
+
+                let position_slice = payload.get(position_offset..(position_offset+position_length))
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
+                let position = FractionalIndex::from_bytes(position_slice.to_vec());
+
+                let checked = payload.get(position_offset+position_length)
+                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
+                let checked = *checked == 1;
+
+
+                Ok(ItemOperation::Tombstone { id, history, head_id: associated_id, item_id, name, position, checked })
+            }
             _ => bail!(StorageError::data_decode("encountered unknown item operation kind"))
         }
     }

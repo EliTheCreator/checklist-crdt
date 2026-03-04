@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 pub struct HeadOperationTombstoneBuilder {
     id: Uuid,
+    history: EventTree,
     head_id: Option<Uuid>,
-    history: Option<EventTree>,
     template_id: Option<Uuid>,
     name: Option<String>,
     description: Option<String>,
@@ -16,11 +16,11 @@ pub struct HeadOperationTombstoneBuilder {
 }
 
 impl HeadOperationTombstoneBuilder {
-    pub fn new(id: Uuid) -> Self {
+    pub fn new(id: Uuid, history: EventTree) -> Self {
         Self {
             id,
+            history,
             head_id: None,
-            history: None,
             template_id: None,
             name: None,
             description: None,
@@ -28,33 +28,25 @@ impl HeadOperationTombstoneBuilder {
         }
     }
 
-    pub fn new_from(id: Uuid, operation: &HeadOperation) -> Self {
-        let builder = Self::new(id);
+    pub fn new_from(id: Uuid, history: EventTree, operation: &HeadOperation) -> Self {
+        let builder = Self::new(id, history);
         builder.apply(operation)
     }
 
     pub fn apply(mut self, operation: &HeadOperation) -> Self {
         use HeadOperation::*;
         match operation {
-            Creation { id, history, template_id, name, description } => {
+            Creation { id, template_id, name, description, .. } => {
                 self.head_id.get_or_insert(id.clone());
-                self.head_id.get_or_insert(id.clone());
-                self.history.get_or_insert(history.clone());
                 self.template_id = self.template_id.or(template_id.clone());
                 self.name.get_or_insert(name.clone());
                 if self.description.is_none() {
                     self.description = description.clone();
                 }
             },
-            NameUpdate { name, ..  } => {
-                self.name = Some(name.clone());
-            },
-            DescriptionUpdate { description, .. } => {
-                self.description = description.clone();
-            },
-            CompletedUpdate { completed, .. } => {
-                self.completed = Some(completed.clone());
-            },
+            NameUpdate { name, ..  } => { self.name = Some(name.clone()) },
+            DescriptionUpdate { description, .. } => { self.description = description.clone() },
+            CompletedUpdate { completed, .. } => { self.completed = Some(completed.clone()) },
             Deletion { .. } => (),
             Tombstone { .. } => todo!(),
         };
@@ -62,38 +54,38 @@ impl HeadOperationTombstoneBuilder {
         self
     }
 
-    pub fn build(self) -> Result<HeadOperation, TombstoneBuilderError> {
+    pub fn build(self) -> Result<HeadOperation, HeadTombstoneBuilderError> {
         Ok(HeadOperation::Tombstone {
             id: self.id,
-            head_id: self.head_id.ok_or(TombstoneBuilderError::new("head_id"))?,
+            history: self.history,
+            head_id: self.head_id.ok_or(HeadTombstoneBuilderError::new("head_id"))?,
             template_id: self.template_id,
-            history: self.history.ok_or(TombstoneBuilderError::new("history"))?,
-            name: self.name.ok_or(TombstoneBuilderError::new("name"))?,
+            name: self.name.ok_or(HeadTombstoneBuilderError::new("name"))?,
             description: self.description,
-            completed: self.completed.ok_or(TombstoneBuilderError::new("completed"))?,
+            completed: self.completed.ok_or(HeadTombstoneBuilderError::new("completed"))?,
         })
     }
 }
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TombstoneBuilderError {
+pub struct HeadTombstoneBuilderError {
     missing_field: String,
 }
 
-impl TombstoneBuilderError {
+impl HeadTombstoneBuilderError {
     pub fn new(missing_field: impl Into<String>) -> Self {
         Self { missing_field: missing_field.into() }
     }
 }
 
-impl Display for TombstoneBuilderError {
+impl Display for HeadTombstoneBuilderError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "tombstone builder error: missing value for {} field", self.missing_field)
     }
 }
 
-impl Error for TombstoneBuilderError {}
+impl Error for HeadTombstoneBuilderError {}
 
 
 #[derive(Debug, Clone, PartialEq)]
