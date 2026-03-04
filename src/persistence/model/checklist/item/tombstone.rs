@@ -49,41 +49,50 @@ impl TombstoneBuilder {
             PositionUpdate { position, .. } => { self.position = Some(position.clone()) },
             CheckedUpdate { checked, .. } => { self.checked = Some(checked.clone()) },
             Deletion { .. } => (),
-            Tombstone { .. } => todo!(),
         };
 
         self
     }
 
-    pub fn build(self) -> Result<Operation, ItemTombstoneBuilderError> {
-        Ok(Operation::Tombstone {
+    pub fn build(self) -> Result<Tombstone, TombstoneBuilderError> {
+        Ok(Tombstone {
             id: self.id,
             history: self.history,
-            item_id: self.item_id.ok_or(ItemTombstoneBuilderError::new("item_id"))?,
-            head_id: self.head_id.ok_or(ItemTombstoneBuilderError::new("head_id"))?,
-            name: self.name.ok_or(ItemTombstoneBuilderError::new("name"))?,
-            position: self.position.ok_or(ItemTombstoneBuilderError::new("completed"))?,
-            checked: self.checked.ok_or(ItemTombstoneBuilderError::new("checked"))?,
+            item_id: self.item_id.ok_or(TombstoneBuilderError::new("item_id"))?,
+            head_id: self.head_id.ok_or(TombstoneBuilderError::new("head_id"))?,
+            name: self.name.ok_or(TombstoneBuilderError::new("name"))?,
+            position: self.position.ok_or(TombstoneBuilderError::new("completed"))?,
+            checked: self.checked.ok_or(TombstoneBuilderError::new("checked"))?,
         })
     }
 }
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ItemTombstoneBuilderError {
+pub struct TombstoneBuilderError {
     missing_field: String,
 }
 
-impl ItemTombstoneBuilderError {
+impl TombstoneBuilderError {
     pub fn new(missing_field: impl Into<String>) -> Self {
         Self { missing_field: missing_field.into() }
     }
 }
 
-impl Display for ItemTombstoneBuilderError {
+impl Display for TombstoneBuilderError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "tombstone builder error: missing value for {} field", self.missing_field)
     }
 }
 
-impl Error for ItemTombstoneBuilderError {}
+impl Error for TombstoneBuilderError {}
+
+pub struct Tombstone {
+    pub id: Uuid,
+    pub history: EventTree,
+    pub head_id: Uuid,
+    pub item_id: Uuid,
+    pub name: String,
+    pub position: FractionalIndex,
+    pub checked: bool,
+}

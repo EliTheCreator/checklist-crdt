@@ -210,7 +210,7 @@ impl Parser {
         Ok(head::Operation::Deletion { id, history, head_id })
     }
 
-    fn parse_head_tombstone(iter: &mut Split<'_, &str>) -> Result<head::Operation, ParserError> {
+    fn parse_head_tombstone(iter: &mut Split<'_, &str>) -> Result<head::Tombstone, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
         let template_id = Self::parse_optional_uuid(iter, "template id")?;
@@ -221,7 +221,7 @@ impl Parser {
 
         let completed = Self::parse_bool(iter, "completed")?;
 
-        Ok(head::Operation::Tombstone { id, history, head_id, template_id, name, description, completed })
+        Ok(head::Tombstone { id, history, head_id, template_id, name, description, completed })
     }
 
     fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
@@ -270,7 +270,7 @@ impl Parser {
         Ok(item::Operation::Deletion { id, history, item_id })
     }
 
-    fn parse_item_tombstone(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
+    fn parse_item_tombstone(iter: &mut Split<'_, &str>) -> Result<item::Tombstone, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
         let head_id = Self::parse_uuid(iter, "head id")?;
@@ -282,7 +282,7 @@ impl Parser {
 
         let checked = Self::parse_bool(iter, "checked")?;
 
-        Ok(item::Operation::Tombstone { id, history, head_id, item_id, name, position, checked })
+        Ok(item::Tombstone { id, history, head_id, item_id, name, position, checked })
     }
 }
 
@@ -298,7 +298,6 @@ impl TryFrom<&str> for head::Operation {
             Some("DescriptionUpdate") => Parser::parse_head_description_update(&mut parts),
             Some("CompletedUpdate") => Parser::parse_head_completed_update(&mut parts),
             Some("Deletion") => Parser::parse_head_deletion(&mut parts),
-            Some("Tombstone") => Parser::parse_head_tombstone(&mut parts),
             Some(prefix) => Err(ParserError::invalid_prefix(format!("unexpected prefix '{}'", prefix))),
             None => Err(ParserError::no_data("no text found")),
         }
@@ -306,6 +305,24 @@ impl TryFrom<&str> for head::Operation {
 }
 
 impl TryFrom<String> for head::Operation {
+    type Error = ParserError;
+
+    fn try_from(line: String) -> std::result::Result<Self, Self::Error> {
+        Self::try_from(line.as_str())
+    }
+}
+
+
+impl TryFrom<&str> for head::Tombstone {
+    type Error = ParserError;
+
+    fn try_from(line: &str) -> std::result::Result<Self, Self::Error> {
+        let mut parts = line.split(" ");
+        Parser::parse_head_tombstone(&mut parts)
+    }
+}
+
+impl TryFrom<String> for head::Tombstone {
     type Error = ParserError;
 
     fn try_from(line: String) -> std::result::Result<Self, Self::Error> {
@@ -325,7 +342,6 @@ impl TryFrom<&str> for item::Operation {
             Some("PositionUpdate") => Parser::parse_item_position_update(&mut parts),
             Some("CheckedUpdate") => Parser::parse_item_checked_update(&mut parts),
             Some("Deletion") => Parser::parse_item_deletion(&mut parts),
-            Some("Tombstone") => Parser::parse_item_tombstone(&mut parts),
             Some(prefix) => Err(ParserError::invalid_prefix(format!("unexpected prefix '{}'", prefix))),
             None => Err(ParserError::no_data("no text found")),
         }
@@ -333,6 +349,24 @@ impl TryFrom<&str> for item::Operation {
 }
 
 impl TryFrom<String> for item::Operation {
+    type Error = ParserError;
+
+    fn try_from(line: String) -> std::result::Result<Self, Self::Error> {
+        Self::try_from(line.as_str())
+    }
+}
+
+
+impl TryFrom<&str> for item::Tombstone {
+    type Error = ParserError;
+
+    fn try_from(line: &str) -> std::result::Result<Self, Self::Error> {
+        let mut parts = line.split(" ");
+        Parser::parse_item_tombstone(&mut parts)
+    }
+}
+
+impl TryFrom<String> for item::Tombstone {
     type Error = ParserError;
 
     fn try_from(line: String) -> std::result::Result<Self, Self::Error> {

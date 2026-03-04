@@ -34,15 +34,6 @@ pub enum Operation {
         history: EventTree,
         head_id: Uuid,
     },
-    Tombstone {
-        id: Uuid,
-        history: EventTree,
-        head_id: Uuid,
-        template_id: Option<Uuid>,
-        name: String,
-        description: Option<String>,
-        completed: bool,
-    },
 }
 
 impl Operation {
@@ -54,7 +45,6 @@ impl Operation {
             DescriptionUpdate { id, .. } => id,
             CompletedUpdate { id, .. } => id,
             Deletion { id, .. } => id,
-            Tombstone { id, .. } => id,
         }
     }
 
@@ -66,7 +56,6 @@ impl Operation {
             DescriptionUpdate { history, .. } => history,
             CompletedUpdate { history, .. } => history,
             Deletion { history, .. } => history,
-            Tombstone { history, .. } => history,
         }
     }
 
@@ -78,7 +67,6 @@ impl Operation {
             DescriptionUpdate { head_id, .. } => head_id,
             CompletedUpdate { head_id, .. } => head_id,
             Deletion { head_id, .. } => head_id,
-            Tombstone { head_id, .. } => head_id,
         }
     }
 }

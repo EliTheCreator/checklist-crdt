@@ -56,21 +56,6 @@ impl Into<String> for &head::Operation {
                     head_id,
                 )
             },
-            Tombstone { id, history, head_id, template_id, name, description, completed } => {
-                let description = description.clone().unwrap_or(String::new());
-                format!(
-                    "Tombstone {} {} {} {} {}:{} {}:{} {}\n",
-                    id,
-                    history,
-                    head_id,
-                    template_id.map_or(String::new(), |template_id| template_id.to_string()),
-                    name.matches(" ").count()+1,
-                    name,
-                    description.matches(" ").count()+1,
-                    description,
-                    completed,
-                )
-            },
         }
     }
 }
@@ -80,6 +65,32 @@ impl Into<String> for head::Operation {
         (&self).into()
     }
 }
+
+
+impl Into<String> for &head::Tombstone {
+    fn into(self) -> String {
+        let description = self.description.clone().unwrap_or(String::new());
+        format!(
+            "{} {} {} {} {}:{} {}:{} {}\n",
+            self.id,
+            self.history,
+            self.head_id,
+            self.template_id.map_or(String::new(), |template_id| template_id.to_string()),
+            self.name.matches(" ").count()+1,
+            self.name,
+            description.matches(" ").count()+1,
+            description,
+            self.completed,
+        )
+    }
+}
+
+impl Into<String> for head::Tombstone {
+    fn into(self) -> String {
+        (&self).into()
+    }
+}
+
 
 impl Into<String> for &item::Operation {
     fn into(self) -> String {
@@ -132,24 +143,34 @@ impl Into<String> for &item::Operation {
                     item_id,
                 )
             },
-            Tombstone { id, history, head_id, item_id, name, position, checked } => {
-                format!(
-                    "Deletion {} {} {} {} {}:{} {} {}\n",
-                    id,
-                    history,
-                    item_id,
-                    head_id,
-                    name.matches(" ").count()+1,
-                    name,
-                    position,
-                    checked,
-                )
-            }
         }
     }
 }
 
 impl Into<String> for item::Operation {
+    fn into(self) -> String {
+        (&self).into()
+    }
+}
+
+
+impl Into<String> for &item::Tombstone {
+    fn into(self) -> String {
+        format!(
+            "{} {} {} {} {}:{} {} {}\n",
+            self.id,
+            self.history,
+            self.item_id,
+            self.head_id,
+            self.name.matches(" ").count()+1,
+            self.name,
+            self.position,
+            self.checked,
+        )
+    }
+}
+
+impl Into<String> for item::Tombstone {
     fn into(self) -> String {
         (&self).into()
     }

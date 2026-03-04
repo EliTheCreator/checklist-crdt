@@ -35,15 +35,6 @@ pub enum Operation {
         history: EventTree,
         item_id: Uuid,
     },
-    Tombstone {
-        id: Uuid,
-        history: EventTree,
-        head_id: Uuid,
-        item_id: Uuid,
-        name: String,
-        position: FractionalIndex,
-        checked: bool,
-    }
 }
 
 impl Operation {
@@ -55,7 +46,6 @@ impl Operation {
             PositionUpdate { id, .. } => id,
             CheckedUpdate { id, .. } => id,
             Deletion { id, .. } => id,
-            Tombstone {id, .. } => id,
         }
     }
 
@@ -67,7 +57,6 @@ impl Operation {
             PositionUpdate { history, .. } => history,
             CheckedUpdate { history, .. } => history,
             Deletion { history, .. } => history,
-            Tombstone { history, .. } => history,
         }
     }
 
@@ -79,7 +68,6 @@ impl Operation {
             PositionUpdate { item_id, .. } => item_id,
             CheckedUpdate { item_id, .. } => item_id,
             Deletion { item_id, .. } => item_id,
-            Tombstone { item_id, .. } => item_id,
         }
     }
 }

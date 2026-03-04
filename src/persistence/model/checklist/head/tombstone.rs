@@ -50,41 +50,51 @@ impl TombstoneBuilder {
             DescriptionUpdate { description, .. } => { self.description = description.clone() },
             CompletedUpdate { completed, .. } => { self.completed = Some(completed.clone()) },
             Deletion { .. } => (),
-            Tombstone { .. } => todo!(),
         };
 
         self
     }
 
-    pub fn build(self) -> Result<Operation, HeadTombstoneBuilderError> {
-        Ok(Operation::Tombstone {
+    pub fn build(self) -> Result<Tombstone, TombstoneBuilderError> {
+        Ok(Tombstone {
             id: self.id,
             history: self.history,
-            head_id: self.head_id.ok_or(HeadTombstoneBuilderError::new("head_id"))?,
+            head_id: self.head_id.ok_or(TombstoneBuilderError::new("head_id"))?,
             template_id: self.template_id,
-            name: self.name.ok_or(HeadTombstoneBuilderError::new("name"))?,
+            name: self.name.ok_or(TombstoneBuilderError::new("name"))?,
             description: self.description,
-            completed: self.completed.ok_or(HeadTombstoneBuilderError::new("completed"))?,
+            completed: self.completed.ok_or(TombstoneBuilderError::new("completed"))?,
         })
     }
 }
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HeadTombstoneBuilderError {
+pub struct TombstoneBuilderError {
     missing_field: String,
 }
 
-impl HeadTombstoneBuilderError {
+impl TombstoneBuilderError {
     pub fn new(missing_field: impl Into<String>) -> Self {
         Self { missing_field: missing_field.into() }
     }
 }
 
-impl Display for HeadTombstoneBuilderError {
+impl Display for TombstoneBuilderError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "tombstone builder error: missing value for {} field", self.missing_field)
     }
 }
 
-impl Error for HeadTombstoneBuilderError {}
+impl Error for TombstoneBuilderError {}
+
+
+pub struct Tombstone {
+    pub id: Uuid,
+    pub history: EventTree,
+    pub head_id: Uuid,
+    pub template_id: Option<Uuid>,
+    pub name: String,
+    pub description: Option<String>,
+    pub completed: bool,
+}
