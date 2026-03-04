@@ -7,7 +7,8 @@ use sqlx::{Connection, Row, Sqlite, Transaction};
 use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
+use crate::persistence::model::checklist::item::ItemOperation;
+use crate::persistence::model::checklist::head::HeadOperation;
 use crate::persistence::{ErrorKind, StorageError};
 use crate::persistence::storage::Store;
 

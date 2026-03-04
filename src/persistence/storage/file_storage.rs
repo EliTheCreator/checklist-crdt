@@ -6,7 +6,8 @@ use exn::{OptionExt, Result, ResultExt, bail};
 use itc::Stamp;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
+use crate::persistence::model::checklist::item::ItemOperation;
+use crate::persistence::model::checklist::head::HeadOperation;
 use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 

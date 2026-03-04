@@ -7,7 +7,8 @@ use uuid::Uuid;
 
 use crate::crdt::crdt::{Crdt, Mutation, OperationDelta, ReplicaState};
 use crate::crdt::crdt_error::CrdtError;
-use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
+use crate::persistence::model::checklist::item::ItemOperation;
+use crate::persistence::model::checklist::head::HeadOperation;
 use crate::persistence::{StorageError, ErrorKind};
 use crate::persistence::storage::Store;
 

@@ -1,4 +1,5 @@
-use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
+use crate::persistence::model::checklist::item::ItemOperation;
+use crate::persistence::model::checklist::head::HeadOperation;
 
 
 impl Into<String> for &HeadOperation {

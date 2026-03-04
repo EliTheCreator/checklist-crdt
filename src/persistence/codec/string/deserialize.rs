@@ -7,7 +7,8 @@ use itc::{EventTree, ascii_coding};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::{HeadOperation, ItemOperation};
+use crate::persistence::model::checklist::item::ItemOperation;
+use crate::persistence::model::checklist::head::HeadOperation;
 
 
 #[derive(Debug)]
