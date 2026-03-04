@@ -2,8 +2,7 @@ use exn::{Result, bail};
 use itc::Stamp;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::item::ItemOperation;
-use crate::persistence::model::checklist::head::HeadOperation;
+use crate::persistence::model::checklist::{head, item};
 use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
@@ -31,35 +30,35 @@ impl Store<'_> for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_head_operation(&mut self, _: HeadOperation) -> Result<(), StorageError> {
+    fn save_head_operation(&mut self, _: head::Operation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_associated_head_operations(&mut self, _: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_associated_head_operations(&mut self, _: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn erase_head_operation(&mut self, _: &Uuid) -> Result<HeadOperation, StorageError> {
+    fn erase_head_operation(&mut self, _: &Uuid) -> Result<head::Operation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn save_item_operation(&mut self, _: ItemOperation) -> Result<(), StorageError> {
+    fn save_item_operation(&mut self, _: item::Operation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_associated_item_operations(&mut self, _: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_associated_item_operations(&mut self, _: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn erase_item_operation(&mut self, _: &Uuid) -> Result<ItemOperation, StorageError> {
+    fn erase_item_operation(&mut self, _: &Uuid) -> Result<item::Operation, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 }

@@ -2,8 +2,7 @@ use exn::Result;
 use itc::Stamp;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::item::ItemOperation;
-use crate::persistence::model::checklist::head::HeadOperation;
+use crate::persistence::model::checklist::{head, item};
 use crate::persistence::storage_error::StorageError;
 
 
@@ -15,13 +14,13 @@ pub trait Store<'a> {
     fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError>;
     fn load_stamp(&mut self) -> Result<Stamp, StorageError>;
 
-    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError>;
-    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError>;
-    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError>;
-    fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError>;
+    fn save_head_operation(&mut self, operation: head::Operation) -> Result<(), StorageError>;
+    fn load_all_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError>;
+    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError>;
+    fn erase_head_operation(&mut self, id: &Uuid) -> Result<head::Operation, StorageError>;
 
-    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError>;
-    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError>;
-    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError>;
-    fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError>;
+    fn save_item_operation(&mut self, operation: item::Operation) -> Result<(), StorageError>;
+    fn load_all_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError>;
+    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError>;
+    fn erase_item_operation(&mut self, id: &Uuid) -> Result<item::Operation, StorageError>;
 }

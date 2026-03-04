@@ -34,7 +34,7 @@ pub struct Mutation<T, U> {
 
 impl<T, U> Mutation<T, U> {
     pub fn new(add: T, remove: U) -> Self {
-        Self { add, remove } 
+        Self { add, remove }
     }
 
     pub fn destruct(self) -> (T, U) {

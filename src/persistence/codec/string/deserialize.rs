@@ -7,8 +7,7 @@ use itc::{EventTree, ascii_coding};
 use loro_fractional_index::FractionalIndex;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::item::ItemOperation;
-use crate::persistence::model::checklist::head::HeadOperation;
+use crate::persistence::model::checklist::{head, item};
 
 
 #[derive(Debug)]
@@ -165,7 +164,7 @@ impl Parser {
         Ok((id, history))
     }
 
-    fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
+    fn parse_head_creation(iter: &mut Split<'_, &str>) -> Result<head::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let template_id = Self::parse_optional_uuid(iter, "template id")?;
 
@@ -173,45 +172,45 @@ impl Parser {
         let description = Some(Self::get_next_string(iter, "description")?)
             .filter(|s| !s.is_empty());
 
-        Ok(HeadOperation::Creation { id, history, template_id, name, description })
+        Ok(head::Operation::Creation { id, history, template_id, name, description })
     }
 
-    fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
+    fn parse_head_name_update(iter: &mut Split<'_, &str>) -> Result<head::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
 
         let name = Self::get_next_string(iter, "name")?;
 
-        Ok(HeadOperation::NameUpdate { id, history, head_id, name })
+        Ok(head::Operation::NameUpdate { id, history, head_id, name })
     }
 
-    fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
+    fn parse_head_description_update(iter: &mut Split<'_, &str>) -> Result<head::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
 
         let description = Some(Self::get_next_string(iter, "description")?)
             .filter(|s| s.is_empty());
 
-        Ok(HeadOperation::DescriptionUpdate { id, history, head_id, description })
+        Ok(head::Operation::DescriptionUpdate { id, history, head_id, description })
     }
 
-    fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
+    fn parse_head_completed_update(iter: &mut Split<'_, &str>) -> Result<head::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
 
         let completed = Self::parse_bool(iter, "completed")?;
 
-        Ok(HeadOperation::CompletedUpdate { id, history, head_id, completed })
+        Ok(head::Operation::CompletedUpdate { id, history, head_id, completed })
     }
 
-    fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
+    fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<head::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
 
-        Ok(HeadOperation::Deletion { id, history, head_id })
+        Ok(head::Operation::Deletion { id, history, head_id })
     }
 
-    fn parse_head_tombstone(iter: &mut Split<'_, &str>) -> Result<HeadOperation, ParserError> {
+    fn parse_head_tombstone(iter: &mut Split<'_, &str>) -> Result<head::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
         let template_id = Self::parse_optional_uuid(iter, "template id")?;
@@ -222,10 +221,10 @@ impl Parser {
 
         let completed = Self::parse_bool(iter, "completed")?;
 
-        Ok(HeadOperation::Tombstone { id, history, head_id, template_id, name, description, completed })
+        Ok(head::Operation::Tombstone { id, history, head_id, template_id, name, description, completed })
     }
 
-    fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
+    fn parse_item_creation(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
 
@@ -233,49 +232,48 @@ impl Parser {
         let position = Self::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
-        Ok(ItemOperation::Creation { id, history, head_id, name, position })
+        Ok(item::Operation::Creation { id, history, head_id, name, position })
     }
 
-    fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
+    fn parse_item_name_update(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
 
         let name = Self::get_next_string(iter, "name")?;
 
-        Ok(ItemOperation::NameUpdate { id, history, item_id, name })
+        Ok(item::Operation::NameUpdate { id, history, item_id, name })
     }
 
-    fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
+    fn parse_item_position_update(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
 
         let position = Self::get_next_str(iter, "position")?;
         let position = FractionalIndex::from_hex_string(position);
 
-        Ok(ItemOperation::PositionUpdate { id, history, item_id, position })
+        Ok(item::Operation::PositionUpdate { id, history, item_id, position })
     }
 
-    fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
+    fn parse_item_checked_update(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
 
         let checked = Self::parse_bool(iter, "checked")?;
 
-        Ok(ItemOperation::CheckedUpdate { id, history, item_id, checked })
+        Ok(item::Operation::CheckedUpdate { id, history, item_id, checked })
     }
 
-    fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
+    fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
 
-        Ok(ItemOperation::Deletion { id, history, item_id })
+        Ok(item::Operation::Deletion { id, history, item_id })
     }
 
-    fn parse_item_tombstone(iter: &mut Split<'_, &str>) -> Result<ItemOperation, ParserError> {
+    fn parse_item_tombstone(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
         let head_id = Self::parse_uuid(iter, "head id")?;
-        
 
         let name = Self::get_next_string(iter, "name")?;
 
@@ -284,12 +282,12 @@ impl Parser {
 
         let checked = Self::parse_bool(iter, "checked")?;
 
-        Ok(ItemOperation::Tombstone { id, history, head_id, item_id, name, position, checked })
+        Ok(item::Operation::Tombstone { id, history, head_id, item_id, name, position, checked })
     }
 }
 
 
-impl TryFrom<&str> for HeadOperation {
+impl TryFrom<&str> for head::Operation {
     type Error = ParserError;
 
     fn try_from(line: &str) -> std::result::Result<Self, Self::Error> {
@@ -307,7 +305,7 @@ impl TryFrom<&str> for HeadOperation {
     }
 }
 
-impl TryFrom<String> for HeadOperation {
+impl TryFrom<String> for head::Operation {
     type Error = ParserError;
 
     fn try_from(line: String) -> std::result::Result<Self, Self::Error> {
@@ -316,7 +314,7 @@ impl TryFrom<String> for HeadOperation {
 }
 
 
-impl TryFrom<&str> for ItemOperation {
+impl TryFrom<&str> for item::Operation {
     type Error = ParserError;
 
     fn try_from(line: &str) -> Result<Self, Self::Error> {
@@ -334,7 +332,7 @@ impl TryFrom<&str> for ItemOperation {
     }
 }
 
-impl TryFrom<String> for ItemOperation {
+impl TryFrom<String> for item::Operation {
     type Error = ParserError;
 
     fn try_from(line: String) -> std::result::Result<Self, Self::Error> {

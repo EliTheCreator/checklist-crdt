@@ -1,10 +1,9 @@
-use crate::persistence::model::checklist::item::ItemOperation;
-use crate::persistence::model::checklist::head::HeadOperation;
+use crate::persistence::model::checklist::{head, item};
 
 
-impl Into<String> for &HeadOperation {
+impl Into<String> for &head::Operation {
     fn into(self) -> String {
-        use HeadOperation::*;
+        use head::Operation::*;
         match self {
             Creation { id, history, template_id, name, description } => {
                 let description = description.clone().unwrap_or(String::new());
@@ -76,15 +75,15 @@ impl Into<String> for &HeadOperation {
     }
 }
 
-impl Into<String> for HeadOperation {
+impl Into<String> for head::Operation {
     fn into(self) -> String {
         (&self).into()
     }
 }
 
-impl Into<String> for &ItemOperation {
+impl Into<String> for &item::Operation {
     fn into(self) -> String {
-        use ItemOperation::*;
+        use item::Operation::*;
         match self {
             Creation { id, history, head_id, name, position } => {
                 format!(
@@ -150,7 +149,7 @@ impl Into<String> for &ItemOperation {
     }
 }
 
-impl Into<String> for ItemOperation {
+impl Into<String> for item::Operation {
     fn into(self) -> String {
         (&self).into()
     }

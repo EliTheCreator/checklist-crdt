@@ -5,10 +5,10 @@ use loro_fractional_index::FractionalIndex;
 use itc::EventTree;
 use uuid::Uuid;
 
-use super::ItemOperation;
+use super::Operation;
 
 
-pub struct ItemOperationTombstoneBuilder {
+pub struct TombstoneBuilder {
     id: Uuid,
     history: EventTree,
     item_id: Option<Uuid>,
@@ -18,7 +18,7 @@ pub struct ItemOperationTombstoneBuilder {
     checked: Option<bool>,
 }
 
-impl ItemOperationTombstoneBuilder {
+impl TombstoneBuilder {
     pub fn new(id: Uuid, history: EventTree) -> Self {
         Self {
             id,
@@ -31,13 +31,13 @@ impl ItemOperationTombstoneBuilder {
         }
     }
 
-    pub fn new_from(id: Uuid, history: EventTree, operation: &ItemOperation) -> Self {
+    pub fn new_from(id: Uuid, history: EventTree, operation: &Operation) -> Self {
         let builder = Self::new(id, history);
         builder.apply(operation)
     }
 
-    pub fn apply(mut self, operation: &ItemOperation) -> Self {
-        use ItemOperation::*;
+    pub fn apply(mut self, operation: &Operation) -> Self {
+        use Operation::*;
         match operation {
             Creation { id, head_id, name, position, .. } => {
                 self.head_id.get_or_insert(head_id.clone());
@@ -55,8 +55,8 @@ impl ItemOperationTombstoneBuilder {
         self
     }
 
-    pub fn build(self) -> Result<ItemOperation, ItemTombstoneBuilderError> {
-        Ok(ItemOperation::Tombstone {
+    pub fn build(self) -> Result<Operation, ItemTombstoneBuilderError> {
+        Ok(Operation::Tombstone {
             id: self.id,
             history: self.history,
             item_id: self.item_id.ok_or(ItemTombstoneBuilderError::new("item_id"))?,

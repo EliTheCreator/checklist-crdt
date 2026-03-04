@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ItemOperation {
+pub enum Operation {
     Creation {
         id: Uuid,
         history: EventTree,
@@ -46,9 +46,9 @@ pub enum ItemOperation {
     }
 }
 
-impl ItemOperation {
+impl Operation {
     pub fn id(&self) -> &Uuid {
-        use ItemOperation::*;
+        use Operation::*;
         match self {
             Creation { id, .. } => id,
             NameUpdate { id, .. } => id,
@@ -60,7 +60,7 @@ impl ItemOperation {
     }
 
     pub fn history(&self) -> &EventTree {
-        use ItemOperation::*;
+        use Operation::*;
         match self {
             Creation { history, .. } => history,
             NameUpdate { history, .. } => history,
@@ -72,7 +72,7 @@ impl ItemOperation {
     }
 
     pub fn item_id(&self) -> &Uuid {
-        use ItemOperation::*;
+        use Operation::*;
         match self {
             Creation { id, .. } => id,
             NameUpdate { item_id, .. } => item_id,

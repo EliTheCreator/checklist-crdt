@@ -4,10 +4,10 @@ use core::fmt::{Display, Formatter};
 use itc::EventTree;
 use uuid::Uuid;
 
-use super::HeadOperation;
+use super::Operation;
 
 
-pub struct HeadOperationTombstoneBuilder {
+pub struct TombstoneBuilder {
     id: Uuid,
     history: EventTree,
     head_id: Option<Uuid>,
@@ -17,7 +17,7 @@ pub struct HeadOperationTombstoneBuilder {
     completed: Option<bool>,
 }
 
-impl HeadOperationTombstoneBuilder {
+impl TombstoneBuilder {
     pub fn new(id: Uuid, history: EventTree) -> Self {
         Self {
             id,
@@ -30,13 +30,13 @@ impl HeadOperationTombstoneBuilder {
         }
     }
 
-    pub fn new_from(id: Uuid, history: EventTree, operation: &HeadOperation) -> Self {
+    pub fn new_from(id: Uuid, history: EventTree, operation: &Operation) -> Self {
         let builder = Self::new(id, history);
         builder.apply(operation)
     }
 
-    pub fn apply(mut self, operation: &HeadOperation) -> Self {
-        use HeadOperation::*;
+    pub fn apply(mut self, operation: &Operation) -> Self {
+        use Operation::*;
         match operation {
             Creation { id, template_id, name, description, .. } => {
                 self.head_id.get_or_insert(id.clone());
@@ -56,8 +56,8 @@ impl HeadOperationTombstoneBuilder {
         self
     }
 
-    pub fn build(self) -> Result<HeadOperation, HeadTombstoneBuilderError> {
-        Ok(HeadOperation::Tombstone {
+    pub fn build(self) -> Result<Operation, HeadTombstoneBuilderError> {
+        Ok(Operation::Tombstone {
             id: self.id,
             history: self.history,
             head_id: self.head_id.ok_or(HeadTombstoneBuilderError::new("head_id"))?,

@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HeadOperation {
+pub enum Operation {
     Creation {
         id: Uuid,
         history: EventTree,
@@ -45,9 +45,9 @@ pub enum HeadOperation {
     },
 }
 
-impl HeadOperation {
+impl Operation {
     pub fn id(&self) -> &Uuid {
-        use HeadOperation::*;
+        use Operation::*;
         match self {
             Creation { id, .. } => id,
             NameUpdate { id, .. } => id,
@@ -59,7 +59,7 @@ impl HeadOperation {
     }
 
     pub fn history(&self) -> &EventTree {
-        use HeadOperation::*;
+        use Operation::*;
         match self {
             Creation { history, .. } => history,
             NameUpdate { history, .. } => history,
@@ -71,7 +71,7 @@ impl HeadOperation {
     }
 
     pub fn head_id(&self) -> &Uuid {
-        use HeadOperation::*;
+        use Operation::*;
         match self {
             Creation { id, .. } => id,
             NameUpdate { head_id, .. } => head_id,

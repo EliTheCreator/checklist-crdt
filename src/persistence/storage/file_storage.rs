@@ -6,8 +6,7 @@ use exn::{OptionExt, Result, ResultExt, bail};
 use itc::Stamp;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::item::ItemOperation;
-use crate::persistence::model::checklist::head::HeadOperation;
+use crate::persistence::model::checklist::{head, item};
 use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
@@ -47,9 +46,9 @@ impl OperationLogFile {
 
 
 enum RollbackFunction {
-    SaveHeadOperation(HeadOperation),
+    SaveHeadOperation(head::Operation),
     EraseHeadOperation(Uuid),
-    SaveItemOperation(ItemOperation),
+    SaveItemOperation(item::Operation),
     EraseItemOperation(Uuid),
     SaveStamp(Stamp),
     EraseStamp,
@@ -130,15 +129,15 @@ impl FileStorage {
         Ok(line)
     }
 
-    fn load_head_operation(line: &str) -> Result<(u64, HeadOperation), StorageError> {
+    fn load_head_operation(line: &str) -> Result<(u64, head::Operation), StorageError> {
         let length = line.len() + 1;
-        let head = HeadOperation::try_from(line)
+        let head = head::Operation::try_from(line)
             .or_raise(|| StorageError::data_decode("unable to deserialize line"))?;
 
         Ok((length as u64, head))
     }
 
-    fn load_all_head_operations_with_length(file: &File) -> Result<Vec<(u64, HeadOperation)>, StorageError> {
+    fn load_all_head_operations_with_length(file: &File) -> Result<Vec<(u64, head::Operation)>, StorageError> {
         let mut file = BufReader::new(file);
         file.seek(SeekFrom::Start(0))
             .or_raise(|| StorageError::backend_specific("failed to seek position in head operation file"))?;
@@ -152,19 +151,19 @@ impl FileStorage {
                     ),
                 }
             })
-            .collect::<Result<Vec<(u64, HeadOperation)>, StorageError>>()
+            .collect::<Result<Vec<(u64, head::Operation)>, StorageError>>()
             .or_raise(|| StorageError::data_decode("unable to parse all lines"))
     }
 
-    fn load_item_operation(line: &str) -> Result<(u64, ItemOperation), StorageError> {
+    fn load_item_operation(line: &str) -> Result<(u64, item::Operation), StorageError> {
         let length = line.len() + 1;
-        let head = ItemOperation::try_from(line)
+        let head = item::Operation::try_from(line)
             .or_raise(|| StorageError::data_decode("unable to deserialize line"))?;
 
         Ok((length as u64, head))
     }
 
-    fn load_all_item_operations_with_length(file: &File) -> Result<Vec<(u64, ItemOperation)>, StorageError> {
+    fn load_all_item_operations_with_length(file: &File) -> Result<Vec<(u64, item::Operation)>, StorageError> {
         let mut file = BufReader::new(file);
         file.seek(SeekFrom::Start(0))
             .or_raise(|| StorageError::backend_specific("failed to seek position in item operation file"))?;
@@ -178,7 +177,7 @@ impl FileStorage {
                     ),
                 }
             })
-            .collect::<Result<Vec<(u64, ItemOperation)>, StorageError>>()
+            .collect::<Result<Vec<(u64, item::Operation)>, StorageError>>()
             .or_raise(|| StorageError::data_decode("unable to parse all lines"))
     }
 }
@@ -280,7 +279,7 @@ impl Store<'_> for FileStorage {
         Ok(stamp)
     }
 
-    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
+    fn save_head_operation(&mut self, operation: head::Operation) -> Result<(), StorageError> {
         let id = operation.id().clone();
         let head_id = operation.head_id().clone();
         let line: String = operation.into();
@@ -340,14 +339,14 @@ impl Store<'_> for FileStorage {
         Ok(())
     }
 
-    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
         Ok(Self::load_all_head_operations_with_length(&self.head_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
     }
 
-    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
         self.head_log_file.operation_positions.iter()
             .filter(|meta| meta.associated_id == *head_id)
             .map(|meta| {
@@ -358,7 +357,7 @@ impl Store<'_> for FileStorage {
             .collect()
     }
 
-    fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
+    fn erase_head_operation(&mut self, id: &Uuid) -> Result<head::Operation, StorageError> {
         let file = &mut self.head_log_file.file;
         let operation_positions = &mut self.head_log_file.operation_positions;
 
@@ -414,7 +413,7 @@ impl Store<'_> for FileStorage {
         Ok(head_operation)
     }
 
-    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError> {
+    fn save_item_operation(&mut self, operation: item::Operation) -> Result<(), StorageError> {
         let id = operation.id().clone();
         let item_id = operation.item_id().clone();
         let line: String = operation.into();
@@ -451,7 +450,7 @@ impl Store<'_> for FileStorage {
 
             file.set_len(start)
                 .or_raise(|| StorageError::backend_specific("failed to truncate item operation file"))?;
-        
+
             file.seek(SeekFrom::Start(start))
                 .or_raise(|| StorageError::backend_specific("failed to seek position in item operation file"))?;
 
@@ -475,14 +474,14 @@ impl Store<'_> for FileStorage {
         Ok(())
     }
 
-    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
         Ok(Self::load_all_item_operations_with_length(&self.item_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
     }
 
-    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
         self.item_log_file.operation_positions.iter()
             .filter(|meta| meta.associated_id == *item_id)
             .map(|meta| {
@@ -493,7 +492,7 @@ impl Store<'_> for FileStorage {
             .collect()
     }
 
-    fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
+    fn erase_item_operation(&mut self, id: &Uuid) -> Result<item::Operation, StorageError> {
         let file = &mut self.item_log_file.file;
         let operation_positions = &mut self.item_log_file.operation_positions;
 
@@ -567,7 +566,7 @@ mod tests {
             item_log_path,
         ).unwrap();
 
-        let head = HeadOperation::Creation {
+        let head = head::Operation::Creation {
             id: uuid::Uuid::now_v7(),
             history: itc::EventTree::zero(),
             template_id: Some(uuid::Uuid::new_v4()),

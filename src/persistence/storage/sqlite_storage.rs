@@ -7,8 +7,7 @@ use sqlx::{Connection, Row, Sqlite, Transaction};
 use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::item::ItemOperation;
-use crate::persistence::model::checklist::head::HeadOperation;
+use crate::persistence::model::checklist::{head, item};
 use crate::persistence::{ErrorKind, StorageError};
 use crate::persistence::storage::Store;
 
@@ -130,8 +129,8 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         bytes
     }
 
-    fn head_to_payload(operation: &HeadOperation) -> Vec<u8> {
-        use HeadOperation::*;
+    fn head_to_payload(operation: &head::Operation) -> Vec<u8> {
+        use head::Operation::*;
         match operation {
             Creation { name, description, .. } => {
                 let mut bytes = Self::str_to_vec_u8(name);
@@ -175,8 +174,8 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         }
     }
 
-    fn head_to_variant_id(operation: &HeadOperation) -> u8 {
-        use HeadOperation::*;
+    fn head_to_variant_id(operation: &head::Operation) -> u8 {
+        use head::Operation::*;
         match operation {
             Creation { .. } => 0,
             NameUpdate { .. } => 1,
@@ -187,8 +186,8 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         }
     }
 
-    fn item_to_payload(operation: &ItemOperation) -> Vec<u8> {
-        use ItemOperation::*;
+    fn item_to_payload(operation: &item::Operation) -> Vec<u8> {
+        use item::Operation::*;
         match operation {
             Creation { name, position, .. } => {
                 let mut bytes = Self::str_to_vec_u8(name);
@@ -217,8 +216,8 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         }
     }
 
-    fn item_to_variant_id(operation: &ItemOperation) -> u8 {
-        use ItemOperation::*;
+    fn item_to_variant_id(operation: &item::Operation) -> u8 {
+        use item::Operation::*;
         match operation {
             Creation { .. } => 0,
             NameUpdate { .. } => 1,
@@ -247,7 +246,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         (bytes, num)
     }
 
-    fn sqlite_row_to_head_operation(row: SqliteRow) -> Result<HeadOperation, StorageError> {
+    fn sqlite_row_to_head_operation(row: SqliteRow) -> Result<head::Operation, StorageError> {
         let id_bytes: &[u8] = row.try_get("id")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
         let id = Uuid::from_slice(id_bytes)
@@ -295,7 +294,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                     None
                 };
 
-                Ok(HeadOperation::Creation { id, history, template_id: associated_id, name, description })
+                Ok(head::Operation::Creation { id, history, template_id: associated_id, name, description })
             },
             1 => {
                 let head_id = associated_id
@@ -307,7 +306,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                 let name = String::from_utf8(name_slice.to_vec())
                     .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
 
-                Ok(HeadOperation::NameUpdate { id, history, head_id, name })
+                Ok(head::Operation::NameUpdate { id, history, head_id, name })
             },
             2 => {
                 let head_id = associated_id
@@ -324,7 +323,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                     None
                 };
 
-                Ok(HeadOperation::DescriptionUpdate { id, history, head_id, description })
+                Ok(head::Operation::DescriptionUpdate { id, history, head_id, description })
             },
             3 => {
                 let head_id = associated_id
@@ -334,13 +333,13 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                     .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let completed = *completed == 1;
 
-                Ok(HeadOperation::CompletedUpdate { id, history, head_id, completed })
+                Ok(head::Operation::CompletedUpdate { id, history, head_id, completed })
             },
             4 => {
                 let head_id = associated_id
                     .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
 
-                Ok(HeadOperation::Deletion { id, history, head_id })
+                Ok(head::Operation::Deletion { id, history, head_id })
             },
             5 => {
                 let head_id = associated_id
@@ -384,13 +383,13 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                     .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let completed = *completed == 1;
 
-                Ok(HeadOperation::Tombstone { id, history, head_id, template_id, name, description, completed })
+                Ok(head::Operation::Tombstone { id, history, head_id, template_id, name, description, completed })
             },
             _ => bail!(StorageError::data_decode("encountered unknown head operation kind"))
         }
     }
 
-    fn sqlite_row_to_item_operation(row: SqliteRow) -> Result<ItemOperation, StorageError> {
+    fn sqlite_row_to_item_operation(row: SqliteRow) -> Result<item::Operation, StorageError> {
         let id_bytes: &[u8] = row.try_get("id")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
         let id = Uuid::from_slice(id_bytes)
@@ -424,7 +423,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                     .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let position = FractionalIndex::from_bytes(position_slice.to_vec());
 
-                Ok(ItemOperation::Creation { id, history, head_id: associated_id, name, position })
+                Ok(item::Operation::Creation { id, history, head_id: associated_id, name, position })
             },
             1 => {
                 let (offset, name_length) = Self::usize_from_payload(payload);
@@ -433,22 +432,22 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                 let name = String::from_utf8(name_slice.to_vec())
                     .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
 
-                Ok(ItemOperation::NameUpdate { id, history, item_id: associated_id, name })
+                Ok(item::Operation::NameUpdate { id, history, item_id: associated_id, name })
             },
             2 => {
                 let position = FractionalIndex::from_bytes(payload.to_vec());
 
-                Ok(ItemOperation::PositionUpdate { id, history, item_id: associated_id, position })
+                Ok(item::Operation::PositionUpdate { id, history, item_id: associated_id, position })
             },
             3 => {
                 let checked = payload.get(0)
                     .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let checked = *checked == 1;
 
-                Ok(ItemOperation::CheckedUpdate { id, history, item_id: associated_id, checked })
+                Ok(item::Operation::CheckedUpdate { id, history, item_id: associated_id, checked })
             },
             4 => {
-                Ok(ItemOperation::Deletion { id, history, item_id: associated_id })
+                Ok(item::Operation::Deletion { id, history, item_id: associated_id })
             },
             5 => {
                 let uuid_length: usize = 16;
@@ -481,7 +480,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                 let checked = *checked == 1;
 
 
-                Ok(ItemOperation::Tombstone { id, history, head_id: associated_id, item_id, name, position, checked })
+                Ok(item::Operation::Tombstone { id, history, head_id: associated_id, item_id, name, position, checked })
             }
             _ => bail!(StorageError::data_decode("encountered unknown item operation kind"))
         }
@@ -517,7 +516,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         .or_raise(|| StorageError::backend_write(
             format!("failed save operation to '{table_name}'")
         ))?;
-        
+
         Ok(())
     }
 
@@ -540,14 +539,14 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         )
     }
 
-    fn load_head_operations_from(&mut self, table_name: &str) -> Result<Vec<HeadOperation>, StorageError> {        
+    fn load_head_operations_from(&mut self, table_name: &str) -> Result<Vec<head::Operation>, StorageError> {
         self.load_operations_from(table_name)?
             .into_iter()
             .map(|row| Self::sqlite_row_to_head_operation(row))
             .collect()
     }
 
-    fn load_item_operations_from(&mut self, table_name: &str) -> Result<Vec<ItemOperation>, StorageError> {        
+    fn load_item_operations_from(&mut self, table_name: &str) -> Result<Vec<item::Operation>, StorageError> {
         self.load_operations_from(table_name)?
             .into_iter()
             .map(|row| Self::sqlite_row_to_item_operation(row))
@@ -582,7 +581,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         &mut self,
         table_name: &str,
         head_id: &Uuid,
-    ) -> Result<Vec<HeadOperation>, StorageError> {      
+    ) -> Result<Vec<head::Operation>, StorageError> {
         self.load_associated_operations_from(table_name, head_id)?
             .into_iter()
             .map(|row| Self::sqlite_row_to_head_operation(row))
@@ -593,7 +592,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         &mut self,
         table_name: &str,
         item_id: &Uuid,
-    ) -> Result<Vec<ItemOperation>, StorageError> {      
+    ) -> Result<Vec<item::Operation>, StorageError> {
         self.load_associated_operations_from(table_name, item_id)?
             .into_iter()
             .map(|row| Self::sqlite_row_to_item_operation(row))
@@ -603,7 +602,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
     fn erase_operation_from(
         &mut self,
         table_name: &str,
-        id: &Uuid        
+        id: &Uuid
     ) -> Result<SqliteRow, StorageError> {
         let query = sqlx::query("
                 DELETE FROM ?
@@ -705,18 +704,18 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
             .or_raise(|| StorageError::stamp_invalid("unable to parse stamp"))
     }
 
-    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
-        let table_name = if let HeadOperation::Tombstone { .. } = operation {
+    fn save_head_operation(&mut self, operation: head::Operation) -> Result<(), StorageError> {
+        let table_name = if let head::Operation::Tombstone { .. } = operation {
             HEAD_TOMBSTONE_TABLE
         } else {
             HEAD_OPERATION_TABLE
         };
 
         let secondary_id = match &operation {
-            HeadOperation::Creation { template_id: None, .. } => {
+            head::Operation::Creation { template_id: None, .. } => {
                 &[]
             },
-            HeadOperation::Creation { template_id: Some(id), .. } => {
+            head::Operation::Creation { template_id: Some(id), .. } => {
                 id.as_bytes().as_slice()
             },
             _ => operation.head_id().as_bytes().as_slice()
@@ -732,25 +731,25 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         )
     }
 
-    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
         let mut operations = Vec::new();
         for table_name in [HEAD_TOMBSTONE_TABLE, HEAD_OPERATION_TABLE] {
             operations.extend(self.load_head_operations_from(table_name)?);
         }
-        
+
         Ok(operations)
     }
 
-    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
         let mut operations = Vec::new();
         for table_name in [HEAD_TOMBSTONE_TABLE, HEAD_OPERATION_TABLE] {
             operations.extend(self.load_associated_head_operations_from(table_name, head_id)?);
         }
-        
+
         Ok(operations)
     }
 
-    fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
+    fn erase_head_operation(&mut self, id: &Uuid) -> Result<head::Operation, StorageError> {
         let row = match self.erase_operation_from(HEAD_OPERATION_TABLE, id) {
             Ok(r) => r,
             Err(e) if e.kind == ErrorKind::BackendDelete => {
@@ -762,7 +761,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         Self::sqlite_row_to_head_operation(row)
     }
 
-    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError> {
+    fn save_item_operation(&mut self, operation: item::Operation) -> Result<(), StorageError> {
         self.save_operation_to(
             ITEM_OPERATION_TABLE,
             operation.id().as_bytes().as_slice(),
@@ -773,25 +772,25 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         )
     }
 
-    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
         let mut operations = Vec::new();
         for table_name in [ITEM_TOMBSTONE_TABLE, ITEM_OPERATION_TABLE] {
             operations.extend(self.load_item_operations_from(table_name)?);
         }
-        
+
         Ok(operations)
     }
 
-    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
         let mut operations = Vec::new();
         for table_name in [ITEM_TOMBSTONE_TABLE, ITEM_OPERATION_TABLE] {
             operations.extend(self.load_associated_item_operations_from(table_name, item_id)?);
         }
-        
+
         Ok(operations)
     }
 
-    fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
+    fn erase_item_operation(&mut self, id: &Uuid) -> Result<item::Operation, StorageError> {
         let row = match self.erase_operation_from(ITEM_OPERATION_TABLE, id) {
             Ok(r) => r,
             Err(e) if e.kind == ErrorKind::BackendDelete => {

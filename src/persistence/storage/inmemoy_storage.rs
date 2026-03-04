@@ -2,16 +2,15 @@ use exn::{Result, bail};
 use itc::Stamp;
 use uuid::Uuid;
 
-use crate::persistence::model::checklist::item::ItemOperation;
-use crate::persistence::model::checklist::head::HeadOperation;
+use crate::persistence::model::checklist::{head, item};
 use crate::persistence::storage_error::StorageError;
 use super::store::Store;
 
 
 enum RollbackFunction {
-    SaveHeadOperation(HeadOperation),
+    SaveHeadOperation(head::Operation),
     EraseHeadOperation(Uuid),
-    SaveItemOperation(ItemOperation),
+    SaveItemOperation(item::Operation),
     EraseItemOperation(Uuid),
     SaveStamp(Stamp),
 }
@@ -19,8 +18,8 @@ enum RollbackFunction {
 
 pub struct InMemoryStorage {
     stamp: Stamp,
-    head_operations: Vec<HeadOperation>,
-    item_operations: Vec<ItemOperation>,
+    head_operations: Vec<head::Operation>,
+    item_operations: Vec<item::Operation>,
     in_transaction: bool,
     rollback_stack: Vec<RollbackFunction>,
 }
@@ -38,8 +37,8 @@ impl InMemoryStorage {
 
     pub fn new_from(
         stamp: Stamp,
-        head_operations: Vec<HeadOperation>,
-        item_operations: Vec<ItemOperation>,
+        head_operations: Vec<head::Operation>,
+        item_operations: Vec<item::Operation>,
     ) -> Self {
         Self {
             stamp: stamp,
@@ -111,7 +110,7 @@ impl Store<'_> for InMemoryStorage {
         Ok(self.stamp.clone())
     }
 
-    fn save_head_operation(&mut self, operation: HeadOperation) -> Result<(), StorageError> {
+    fn save_head_operation(&mut self, operation: head::Operation) -> Result<(), StorageError> {
         let id = operation.id().clone();
 
         let index = self.head_operations.binary_search_by_key(operation.id(), |h| *h.id())
@@ -125,11 +124,11 @@ impl Store<'_> for InMemoryStorage {
         Ok(())
     }
 
-    fn load_all_head_operations(&mut self) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
         Ok(self.head_operations.clone())
     }
 
-    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<HeadOperation>, StorageError> {
+    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
         let heads = self.head_operations.iter()
             .filter(|head| head.head_id() == head_id)
             .map(|head| head.clone())
@@ -138,7 +137,7 @@ impl Store<'_> for InMemoryStorage {
         Ok(heads)
     }
 
-    fn erase_head_operation(&mut self, id: &Uuid) -> Result<HeadOperation, StorageError> {
+    fn erase_head_operation(&mut self, id: &Uuid) -> Result<head::Operation, StorageError> {
         let index = match self.head_operations.binary_search_by_key(id, |h| *h.id()) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
@@ -155,7 +154,7 @@ impl Store<'_> for InMemoryStorage {
         Ok(head_operation)
     }
 
-    fn save_item_operation(&mut self, operation: ItemOperation) -> Result<(), StorageError> {
+    fn save_item_operation(&mut self, operation: item::Operation) -> Result<(), StorageError> {
         let id = operation.id().clone();
 
         let index = self.item_operations.binary_search_by_key(operation.id(), |h| *h.id())
@@ -169,11 +168,11 @@ impl Store<'_> for InMemoryStorage {
         Ok(())
     }
 
-    fn load_all_item_operations(&mut self) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
         Ok(self.item_operations.clone())
     }
 
-    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<ItemOperation>, StorageError> {
+    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
         let items = self.item_operations.iter()
             .filter(|item| item.item_id() == item_id)
             .map(|item| item.clone())
@@ -182,7 +181,7 @@ impl Store<'_> for InMemoryStorage {
         Ok(items)
     }
 
-    fn erase_item_operation(&mut self, id: &Uuid) -> Result<ItemOperation, StorageError> {
+    fn erase_item_operation(&mut self, id: &Uuid) -> Result<item::Operation, StorageError> {
         let index = match self.item_operations.binary_search_by_key(id, |i| *i.id()) {
             Ok(i) => i,
             Err(_) => bail!(StorageError::backend_specific(
