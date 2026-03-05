@@ -339,14 +339,22 @@ impl Store<'_> for FileStorage {
         Ok(())
     }
 
-    fn load_all_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
+    fn save_head_tombstone(&mut self, tombstone: head::Tombstone) -> Result<(), StorageError> {
+        todo!()
+    }
+
+    fn load_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
         Ok(Self::load_all_head_operations_with_length(&self.head_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
     }
 
-    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
+    fn load_head_tombstones(&mut self) -> Result<Vec<head::Tombstone>, StorageError> {
+        todo!()
+    }
+
+    fn load_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
         self.head_log_file.operation_positions.iter()
             .filter(|meta| meta.associated_id == *head_id)
             .map(|meta| {
@@ -355,6 +363,10 @@ impl Store<'_> for FileStorage {
                     .and_then(|pair| Ok(pair.1))
             })
             .collect()
+    }
+
+    fn load_associated_head_tombstone(&mut self, head_id: &Uuid) -> Result<Option<head::Tombstone>, StorageError> {
+        todo!()
     }
 
     fn erase_head_operation(&mut self, id: &Uuid) -> Result<head::Operation, StorageError> {
@@ -411,6 +423,10 @@ impl Store<'_> for FileStorage {
         }
 
         Ok(head_operation)
+    }
+
+    fn erase_head_tombstone(&mut self, id: &Uuid) -> Result<head::Tombstone, StorageError> {
+        todo!()
     }
 
     fn save_item_operation(&mut self, operation: item::Operation) -> Result<(), StorageError> {
@@ -474,14 +490,22 @@ impl Store<'_> for FileStorage {
         Ok(())
     }
 
-    fn load_all_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
+    fn save_item_tombstone(&mut self, tombstone: item::Tombstone) -> Result<(), StorageError> {
+        todo!()
+    }
+
+    fn load_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
         Ok(Self::load_all_item_operations_with_length(&self.item_log_file.file)?
             .into_iter().map(|t| t.1)
             .collect()
         )
     }
 
-    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
+    fn load_item_tombstones(&mut self) -> Result<Vec<item::Tombstone>, StorageError> {
+        todo!()
+    }
+
+    fn load_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
         self.item_log_file.operation_positions.iter()
             .filter(|meta| meta.associated_id == *item_id)
             .map(|meta| {
@@ -490,6 +514,10 @@ impl Store<'_> for FileStorage {
                     .and_then(|pair| Ok(pair.1))
             })
             .collect()
+    }
+
+    fn load_associated_item_tombstone(&mut self, item_id: &Uuid) -> Result<Option<item::Tombstone>, StorageError> {
+        todo!()
     }
 
     fn erase_item_operation(&mut self, id: &Uuid) -> Result<item::Operation, StorageError> {
@@ -546,6 +574,10 @@ impl Store<'_> for FileStorage {
         }
 
         Ok(item_operation)
+    }
+
+    fn erase_item_tombstone(&mut self, id: &Uuid) -> Result<item::Tombstone, StorageError> {
+        todo!()
     }
 }
 

@@ -113,7 +113,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
 
     fn save_head_operation(&mut self, operation: head::Operation) -> Result<SingleMutation<head::Operation>, CrdtError> {
         let associated_operations = self.storage
-            .load_all_associated_head_operations(operation.head_id())
+            .load_associated_head_operations(operation.head_id())
             .map_err(|e|
                 self.abort_transaction(e, "crdt unable to load associated head operations")
             )?;
@@ -237,13 +237,13 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     }
 
     pub fn get_heads(&mut self) -> Result<Vec<head::Operation>, CrdtError> {
-        self.storage.load_all_head_operations()
+        self.storage.load_head_operations()
             .or_raise(|| CrdtError::recovered("crdt unable to load all head operations"))
     }
 
     fn save_item_operation(&mut self, operation: item::Operation) -> Result<SingleMutation<item::Operation>, CrdtError> {
         let associated_operations = self.storage
-            .load_all_associated_item_operations(operation.item_id())
+            .load_associated_item_operations(operation.item_id())
             .map_err(|e|
                 self.abort_transaction(e, "crdt unable to load associated item operations")
             )?;
@@ -367,7 +367,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     }
 
     pub fn get_items(&mut self) -> Result<Vec<item::Operation>, CrdtError> {
-        self.storage.load_all_item_operations()
+        self.storage.load_item_operations()
             .or_raise(|| CrdtError::recovered("crdt unable to load all item operations"))
     }
 }

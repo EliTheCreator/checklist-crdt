@@ -34,11 +34,23 @@ impl Store<'_> for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
+    fn save_head_tombstone(&mut self, _: head::Tombstone) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_associated_head_operations(&mut self, _: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
+    fn load_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
+    fn load_head_tombstones(&mut self) -> Result<Vec<head::Tombstone>, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
+    fn load_associated_head_operations(&mut self, _: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
+    fn load_associated_head_tombstone(&mut self, _: &Uuid) -> Result<Option<head::Tombstone>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
@@ -46,19 +58,39 @@ impl Store<'_> for ErrorStorage {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
+    fn erase_head_tombstone(&mut self, _: &Uuid) -> Result<head::Tombstone, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
     fn save_item_operation(&mut self, _: item::Operation) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
+    fn save_item_tombstone(&mut self, _: item::Tombstone) -> Result<(), StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
-    fn load_all_associated_item_operations(&mut self, _: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
+    fn load_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
+    fn load_item_tombstones(&mut self) -> Result<Vec<item::Tombstone>, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
+    fn load_associated_item_operations(&mut self, _: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
+    fn load_associated_item_tombstone(&mut self, _: &Uuid) -> Result<Option<item::Tombstone>, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 
     fn erase_item_operation(&mut self, _: &Uuid) -> Result<item::Operation, StorageError> {
+        bail!(StorageError::backend_specific("this storage always returns an error"))
+    }
+
+    fn erase_item_tombstone(&mut self, _: &Uuid) -> Result<item::Tombstone, StorageError> {
         bail!(StorageError::backend_specific("this storage always returns an error"))
     }
 }

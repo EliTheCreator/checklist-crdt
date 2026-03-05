@@ -12,6 +12,17 @@ use crate::persistence::{ErrorKind, StorageError};
 use crate::persistence::storage::Store;
 
 
+macro_rules! execute {
+    ($this:expr, $query:expr, $method:ident) => {
+        if let Some(transaction) = &mut $this.transaction {
+            $this.executor.block_on($query.$method(&mut **transaction))
+        } else {
+            $this.executor.block_on($query.$method(&mut **$this.sqlite_connection))
+        }
+    };
+}
+
+
 const HEAD_OPERATION_TABLE: &str = "head_operation";
 const HEAD_TOMBSTONE_TABLE: &str = "head_tombstone";
 const ITEM_OPERATION_TABLE: &str = "item_operation";
@@ -32,65 +43,72 @@ pub struct SqliteStorage<'a, B: BlockOn> {
 impl<'a, B: BlockOn> SqliteStorage<'a, B> {
     pub fn new(sqlite_connection: &'a mut PoolConnection<Sqlite>, executor: &'a B) -> Result<Self, StorageError> {
         let _ = executor.block_on(
-            sqlx::query(
-                r#"
+            sqlx::query("
                     CREATE TABLE IF NOT EXISTS stamp (
                         id INTEGER PRIMARY KEY CHECK (id = 0),
                         stamp BLOB NOT NULL
                     ) WITHOUT ROWID;
-                    "#
-                )
+                ")
                 .execute(&mut **sqlite_connection)
             )
             .or_raise(|| StorageError::backend_specific("failed to create stamp table"))?;
 
-        let _ = executor.block_on(
-            sqlx::query(
-                r#"
-                    CREATE TABLE IF NOT EXISTS head_operation (
-                        id BLOB PRIMARY KEY NOT NULL,
-                        history BLOB NOT NULL,
-                        secondary_id BLOB NOT NULL,
-                        variant INTEGER NOT NULL,
-                        payload BLOB NOT NULL
-                    ) WITHOUT ROWID;
-                    "#
+        for table_name in [HEAD_OPERATION_TABLE, ITEM_OPERATION_TABLE] {
+            let _ = executor.block_on(
+                sqlx::query("
+                        CREATE TABLE IF NOT EXISTS ? (
+                            id BLOB PRIMARY KEY NOT NULL,
+                            history BLOB NOT NULL,
+                            secondary_id BLOB NOT NULL,
+                            variant INTEGER NOT NULL,
+                            payload BLOB NOT NULL
+                        ) WITHOUT ROWID;
+                    ")
+                    .bind(table_name)
+                    .execute(&mut **sqlite_connection)
                 )
-                .execute(&mut **sqlite_connection)
-            )
-            .or_raise(|| StorageError::backend_specific("failed to create head_operation table"))?;
+                .or_raise(|| StorageError::backend_specific(format!(
+                    "failed to create '{table_name}' table"
+                )))?;
+        }
 
         let _ = executor.block_on(
-            sqlx::query(
-                r#"
-                    CREATE TABLE IF NOT EXISTS head_tombstone (
+            sqlx::query("
+                    CREATE TABLE IF NOT EXISTS ? (
                         id BLOB PRIMARY KEY NOT NULL,
                         history BLOB NOT NULL,
-                        secondary_id BLOB NOT NULL,
-                        variant INTEGER NOT NULL,
-                        payload BLOB NOT NULL
+                        head_id BLOB NOT NULL,
+                        template_id BLOB,
+                        name TEXT NOT NULL,
+                        description TEXT,
+                        completed BOOLEAN NOT NULL
                     ) WITHOUT ROWID;
-                    "#
-                )
+                ")
+                .bind(HEAD_TOMBSTONE_TABLE)
                 .execute(&mut **sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed to create head_operation table"))?;
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to create '{HEAD_TOMBSTONE_TABLE}' table")
+            ))?;
 
         let _ = executor.block_on(
-            sqlx::query(
-                r#"
-                    CREATE TABLE IF NOT EXISTS item_operation (
+            sqlx::query("
+                    CREATE TABLE IF NOT EXISTS ? (
                         id BLOB PRIMARY KEY NOT NULL,
                         history BLOB NOT NULL,
-                        secondary_id BLOB NOT NULL,
-                        variant INTEGER NOT NULL,
-                        payload BLOB NOT NULL
+                        head_id BLOB NOT NULL,
+                        item_id BLOB NOT NULL,
+                        name TEXT NOT NULL,
+                        position BLOB NOT NULL,
+                        checked BOOLEAN NOT NULL
                     ) WITHOUT ROWID;
-                    "#
-                )
+                ")
+                .bind(ITEM_TOMBSTONE_TABLE)
                 .execute(&mut **sqlite_connection)
             )
-            .or_raise(|| StorageError::backend_specific("failed to create item_operation table"))?;
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to create '{ITEM_TOMBSTONE_TABLE}' table")
+            ))?;
 
         Ok(Self { executor, sqlite_connection, transaction: None })
     }
@@ -119,16 +137,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         bytes
     }
 
-    fn position_to_vec_u8(position: &FractionalIndex) -> Vec<u8> {
-        let position_as_bytes = position.as_bytes();
-        let length = position_as_bytes.len();
-
-        let mut bytes = Self::usize_to_vec_u8(length);
-        bytes.extend(position_as_bytes);
-
-        bytes
-    }
-
     fn head_to_payload(operation: &head::Operation) -> Vec<u8> {
         use head::Operation::*;
         match operation {
@@ -151,26 +159,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                 vec![completed.clone() as u8,]
             },
             Deletion { .. }  => Vec::new(),
-            Tombstone { template_id, name, description, completed, .. }  => {
-                let mut bytes = if let Some(template_id) = template_id {
-                    let template_id_bytes= template_id.as_bytes();
-                    let mut bytes = Self::usize_to_vec_u8(template_id_bytes.len());
-                    bytes.extend_from_slice(template_id_bytes);
-                    bytes
-                } else {
-                    vec![0,]
-                };
-
-                bytes.extend(Self::str_to_vec_u8(name));
-
-                let description = description.as_deref().unwrap_or_default();
-                let description_as_bytes = Self::str_to_vec_u8(description);
-                bytes.extend(description_as_bytes);
-
-                bytes.push(completed.clone() as u8);
-
-                bytes
-            },
         }
     }
 
@@ -182,7 +170,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             DescriptionUpdate { .. } => 2,
             CompletedUpdate { .. } => 3,
             Deletion { .. } => 4,
-            Tombstone { .. }  => 5,
         }
     }
 
@@ -205,14 +192,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                 vec![checked.clone() as u8,]
             },
             Deletion { .. }  => Vec::new(),
-            Tombstone { head_id, name, position, checked, .. } => {
-                let mut bytes = Vec::from(head_id.as_bytes());
-                bytes.extend(Self::str_to_vec_u8(name));
-                bytes.extend(Self::position_to_vec_u8(position));
-                bytes.push(checked.clone() as u8);
-
-                bytes
-            }
         }
     }
 
@@ -224,7 +203,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             PositionUpdate { .. } => 2,
             CheckedUpdate { .. } => 3,
             Deletion { .. } => 4,
-            Tombstone { .. } => 5,
         }
     }
 
@@ -341,52 +319,45 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
 
                 Ok(head::Operation::Deletion { id, history, head_id })
             },
-            5 => {
-                let head_id = associated_id
-                    .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
-
-                let (template_id_offset, template_id_length) = Self::usize_from_payload(payload);
-                let template_id_slice = payload.get(template_id_offset..(template_id_offset+template_id_length))
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let template_id = if template_id_slice.len() != 0 {
-                    Some(Uuid::from_slice(template_id_slice)
-                        .or_raise(|| StorageError::data_decode("unable to decode uuid"))?)
-                } else {
-                    None
-                };
-
-                let name_length_slice = payload.get((template_id_offset+template_id_length)..)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let (mut name_offset, name_length) = Self::usize_from_payload(name_length_slice);
-                name_offset += template_id_offset + template_id_length;
-
-                let name_slice = payload.get(name_offset..(name_offset+name_length))
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
-
-                let desc_length_slice = payload.get((name_offset+name_length)..)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let (mut desc_offset, desc_length) = Self::usize_from_payload(desc_length_slice);
-                desc_offset += name_offset+name_length;
-
-                let description = if desc_length != 0 {
-                    let desc_slice = payload.get(desc_offset..(desc_length+desc_offset))
-                        .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                    Some(String::from_utf8(desc_slice.to_vec())
-                        .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?)
-                } else {
-                    None
-                };
-
-                let completed = payload.get(desc_offset+desc_length)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let completed = *completed == 1;
-
-                Ok(head::Operation::Tombstone { id, history, head_id, template_id, name, description, completed })
-            },
             _ => bail!(StorageError::data_decode("encountered unknown head operation kind"))
         }
+    }
+
+    fn sqlite_row_to_head_tombstone(row: SqliteRow) -> Result<head::Tombstone, StorageError> {
+        let id_bytes: &[u8] = row.try_get("id")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
+        let id = Uuid::from_slice(id_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+
+        let history_bytes: &[u8] = row.try_get("history")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'history' field"))?;
+        let history = EventTree::try_from(history_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode event tree"))?;
+
+        let head_id_bytes: &[u8] = row.try_get("head_id")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'head_id' field"))?;
+        let head_id = Uuid::from_slice(head_id_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+
+        let template_id_bytes: Option<&[u8]> = row.try_get("template_id")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'template_id' field"))?;
+        let template_id = if let Some(template_id_bytes) = template_id_bytes {
+            Some(Uuid::from_slice(template_id_bytes)
+                .or_raise(|| StorageError::data_decode("unable to decode uuid"))?)
+        } else {
+            None
+        };
+
+        let name: String = row.try_get("name")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'name' field"))?;
+
+        let description: Option<String> = row.try_get("description")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'description' field"))?;
+
+        let completed: bool = row.try_get("completed")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'completed' field"))?;
+
+        Ok(head::Tombstone { id, history, head_id, template_id, name, description, completed })
     }
 
     fn sqlite_row_to_item_operation(row: SqliteRow) -> Result<item::Operation, StorageError> {
@@ -449,41 +420,42 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             4 => {
                 Ok(item::Operation::Deletion { id, history, item_id: associated_id })
             },
-            5 => {
-                let uuid_length: usize = 16;
-                let item_id_slice = payload.get(0..uuid_length)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let item_id= Uuid::from_slice(item_id_slice)
-                        .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
-
-                let name_length_slice = payload.get(uuid_length..)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let (mut name_offset, name_length) = Self::usize_from_payload(name_length_slice);
-                name_offset += uuid_length;
-
-                let name_slice = payload.get(name_offset..(name_offset+name_length))
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
-
-                let position_length_slice = payload.get((name_offset+name_length)..)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let (mut position_offset, position_length) = Self::usize_from_payload(position_length_slice);
-                position_offset += name_offset+name_length;
-
-                let position_slice = payload.get(position_offset..(position_offset+position_length))
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let position = FractionalIndex::from_bytes(position_slice.to_vec());
-
-                let checked = payload.get(position_offset+position_length)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let checked = *checked == 1;
-
-
-                Ok(item::Operation::Tombstone { id, history, head_id: associated_id, item_id, name, position, checked })
-            }
             _ => bail!(StorageError::data_decode("encountered unknown item operation kind"))
         }
+    }
+
+    fn sqlite_row_to_item_tombstone(row: SqliteRow) -> Result<item::Tombstone, StorageError> {
+        let id_bytes: &[u8] = row.try_get("id")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
+        let id = Uuid::from_slice(id_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+
+        let history_bytes: &[u8] = row.try_get("history")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'history' field"))?;
+        let history = EventTree::try_from(history_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode event tree"))?;
+
+        let head_id_bytes: &[u8] = row.try_get("head_id")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'head_id' field"))?;
+        let head_id = Uuid::from_slice(head_id_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+
+        let item_id_bytes: &[u8] = row.try_get("item_id")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'item_id' field"))?;
+        let item_id = Uuid::from_slice(item_id_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+
+        let name: String = row.try_get("name")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'name' field"))?;
+
+        let position_bytes: &[u8] = row.try_get("position")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'position' field"))?;
+        let position = FractionalIndex::from_bytes(position_bytes.to_vec());
+
+        let checked: bool = row.try_get("checked")
+            .or_raise(|| StorageError::backend_specific("failed to retrieve 'checked' field"))?;
+
+        Ok(item::Tombstone { id, history, head_id, item_id, name, position, checked })
     }
 
     fn save_operation_to(
@@ -508,35 +480,25 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             .bind(variant)
             .bind(payload);
 
-        let _ = if let Some(transaction) = &mut self.transaction {
-            self.executor.block_on(query.execute(&mut **transaction))
-        } else {
-            self.executor.block_on(query.execute(&mut **self.sqlite_connection))
-        }
-        .or_raise(|| StorageError::backend_write(
-            format!("failed save operation to '{table_name}'")
-        ))?;
+        execute!(self, query, execute)
+            .or_raise(|| StorageError::backend_write(
+                format!("failed save operation to '{table_name}'")
+            ))?;
 
         Ok(())
     }
 
     fn load_operations_from(&mut self, table_name: &str) -> Result<Vec<SqliteRow>, StorageError> {
-        let query = sqlx::query(
-                r#"
-                    SELECT id, history, secondary_id, variant, payload
-                    FROM ?
-                "#
-            )
+        let query = sqlx::query("
+                SELECT id, history, secondary_id, variant, payload
+                FROM ?
+            ")
             .bind(table_name);
 
-        if let Some(transaction) = &mut self.transaction {
-            self.executor.block_on(query.fetch_all(&mut **transaction))
-        } else {
-            self.executor.block_on(query.fetch_all(&mut **self.sqlite_connection))
-        }
-        .or_raise(|| StorageError::backend_read(
-            format!("failed load operations from '{table_name}'"))
-        )
+        execute!(self, query, fetch_all)
+            .or_raise(|| StorageError::backend_read(
+                format!("failed load operations from '{table_name}'"))
+            )
     }
 
     fn load_head_operations_from(&mut self, table_name: &str) -> Result<Vec<head::Operation>, StorageError> {
@@ -567,14 +529,10 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             .bind(associated_id.as_bytes().as_slice())
             .bind(associated_id.as_bytes().as_slice());
 
-        if let Some(transaction) = &mut self.transaction {
-            self.executor.block_on(query.fetch_all(&mut **transaction))
-        } else {
-            self.executor.block_on(query.fetch_all(&mut **self.sqlite_connection))
-        }
-        .or_raise(|| StorageError::backend_read(format!(
-            "failed load associated operations to '{associated_id}' from '{table_name}'")
-        ))
+        execute!(self, query, fetch_all)
+            .or_raise(|| StorageError::backend_read(format!(
+                "failed load associated operations to '{associated_id}' from '{table_name}'")
+            ))
     }
 
     fn load_associated_head_operations_from(
@@ -612,15 +570,11 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             .bind(table_name)
             .bind(id.as_bytes().as_slice());
 
-        if let Some(transaction) = &mut self.transaction {
-            self.executor.block_on(query.fetch_optional(&mut **transaction))
-        } else {
-            self.executor.block_on(query.fetch_optional(&mut **self.sqlite_connection))
-        }
-        .or_raise(|| StorageError::backend_delete(
-            format!("failed to delete operation from {table_name}"))
-        )?
-        .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))
+        execute!(self, query, fetch_optional)
+            .or_raise(|| StorageError::backend_delete(
+                format!("failed to delete operation from {table_name}"))
+            )?
+            .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))
     }
 }
 
@@ -705,12 +659,6 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn save_head_operation(&mut self, operation: head::Operation) -> Result<(), StorageError> {
-        let table_name = if let head::Operation::Tombstone { .. } = operation {
-            HEAD_TOMBSTONE_TABLE
-        } else {
-            HEAD_OPERATION_TABLE
-        };
-
         let secondary_id = match &operation {
             head::Operation::Creation { template_id: None, .. } => {
                 &[]
@@ -722,7 +670,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         };
 
         self.save_operation_to(
-            table_name,
+            HEAD_OPERATION_TABLE,
             operation.id().as_bytes().as_slice(),
             Into::<Box<[u8]>>::into(operation.history()),
             secondary_id,
@@ -731,7 +679,31 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         )
     }
 
-    fn load_all_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
+    fn save_head_tombstone(&mut self, tombstone: head::Tombstone) -> Result<(), StorageError> {
+        let query = sqlx::query("
+                INSERT INTO ?
+                (id, history, head_id, template_id, name, description, completed)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+            ")
+            .bind(HEAD_TOMBSTONE_TABLE)
+            .bind(tombstone.id.as_bytes().as_slice())
+            .bind(Into::<Box<[u8]>>::into(tombstone.history))
+            .bind(tombstone.head_id.as_bytes().as_slice())
+            .bind(tombstone.template_id.as_ref().map(|id| id.as_bytes().as_slice()))
+            .bind(tombstone.name)
+            .bind(tombstone.description)
+            .bind(tombstone.completed);
+
+        let _ = execute!(self, query, execute)
+            .or_raise(|| StorageError::backend_write(
+                format!("failed save tombstone to '{HEAD_TOMBSTONE_TABLE}'")
+            ))?;
+
+        Ok(())
+    }
+
+    fn load_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
         let mut operations = Vec::new();
         for table_name in [HEAD_TOMBSTONE_TABLE, HEAD_OPERATION_TABLE] {
             operations.extend(self.load_head_operations_from(table_name)?);
@@ -740,13 +712,52 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         Ok(operations)
     }
 
-    fn load_all_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
+    fn load_head_tombstones(&mut self) -> Result<Vec<head::Tombstone>, StorageError> {
+        let query = sqlx::query("
+                SELECT id, history, head_id, template_id, name, description, completed
+                FROM ?
+            ")
+            .bind(HEAD_TOMBSTONE_TABLE);
+
+        execute!(self, query, fetch_all)
+            .or_raise(|| StorageError::backend_read(
+                format!("failed load tombstones from '{HEAD_TOMBSTONE_TABLE}'"))
+            )?
+            .into_iter()
+            .map(|row| Self::sqlite_row_to_head_tombstone(row))
+            .collect()
+    }
+
+    fn load_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
         let mut operations = Vec::new();
         for table_name in [HEAD_TOMBSTONE_TABLE, HEAD_OPERATION_TABLE] {
             operations.extend(self.load_associated_head_operations_from(table_name, head_id)?);
         }
 
         Ok(operations)
+    }
+
+    fn load_associated_head_tombstone(&mut self, head_id: &Uuid) -> Result<Option<head::Tombstone>, StorageError> {
+        let query = sqlx::query("
+                SELECT id, history, head_id, template_id, name, description, completed
+                FROM ?
+                WHERE head_id = ?
+            ")
+            .bind(HEAD_TOMBSTONE_TABLE)
+            .bind(head_id.as_bytes().as_slice());
+
+        let row = execute!(self, query, fetch_optional)
+            .or_raise(|| StorageError::backend_read(
+                format!("failed load tombstone from '{HEAD_TOMBSTONE_TABLE}'"))
+            )?;
+
+        let tombstone = if let Some(row) = row {
+            Some(Self::sqlite_row_to_head_tombstone(row)?)
+        } else {
+            None
+        };
+
+        Ok(tombstone)
     }
 
     fn erase_head_operation(&mut self, id: &Uuid) -> Result<head::Operation, StorageError> {
@@ -761,6 +772,24 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         Self::sqlite_row_to_head_operation(row)
     }
 
+    fn erase_head_tombstone(&mut self, id: &Uuid) -> Result<head::Tombstone, StorageError> {
+        let query = sqlx::query("
+                DELETE FROM ?
+                WHERE ID = ?
+                RETURNING id, history, head_id, template_id, name, description, completed
+            ")
+            .bind(HEAD_TOMBSTONE_TABLE)
+            .bind(id.as_bytes().as_slice());
+
+        let row = execute!(self, query, fetch_optional)
+            .or_raise(|| StorageError::backend_delete(
+                format!("failed to delete tombstone from {HEAD_TOMBSTONE_TABLE}"))
+            )?
+            .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))?;
+
+        Ok(Self::sqlite_row_to_head_tombstone(row)?)
+    }
+
     fn save_item_operation(&mut self, operation: item::Operation) -> Result<(), StorageError> {
         self.save_operation_to(
             ITEM_OPERATION_TABLE,
@@ -772,7 +801,31 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         )
     }
 
-    fn load_all_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
+    fn save_item_tombstone(&mut self, tombstone: item::Tombstone) -> Result<(), StorageError> {
+        let query = sqlx::query("
+                INSERT INTO ?
+                (id, history, head_id, item_id, name, position, checked)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+            ")
+            .bind(HEAD_TOMBSTONE_TABLE)
+            .bind(tombstone.id.as_bytes().as_slice())
+            .bind(Into::<Box<[u8]>>::into(tombstone.history))
+            .bind(tombstone.head_id.as_bytes().as_slice())
+            .bind(tombstone.item_id.as_bytes().as_slice())
+            .bind(tombstone.name)
+            .bind(tombstone.position.as_bytes())
+            .bind(tombstone.checked);
+
+        let _ = execute!(self, query, execute)
+            .or_raise(|| StorageError::backend_write(
+                format!("failed save tombstone to '{ITEM_TOMBSTONE_TABLE}'")
+            ))?;
+
+        Ok(())
+    }
+
+    fn load_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
         let mut operations = Vec::new();
         for table_name in [ITEM_TOMBSTONE_TABLE, ITEM_OPERATION_TABLE] {
             operations.extend(self.load_item_operations_from(table_name)?);
@@ -781,13 +834,52 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         Ok(operations)
     }
 
-    fn load_all_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
+    fn load_item_tombstones(&mut self) -> Result<Vec<item::Tombstone>, StorageError> {
+        let query = sqlx::query("
+                SELECT id, history, head_id, item_id, name, position, checked
+                FROM ?
+            ")
+            .bind(ITEM_TOMBSTONE_TABLE);
+
+        execute!(self, query, fetch_all)
+            .or_raise(|| StorageError::backend_read(
+                format!("failed load tombstones from '{ITEM_TOMBSTONE_TABLE}'"))
+            )?
+            .into_iter()
+            .map(|row| Self::sqlite_row_to_item_tombstone(row))
+            .collect()
+    }
+
+    fn load_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
         let mut operations = Vec::new();
         for table_name in [ITEM_TOMBSTONE_TABLE, ITEM_OPERATION_TABLE] {
             operations.extend(self.load_associated_item_operations_from(table_name, item_id)?);
         }
 
         Ok(operations)
+    }
+
+    fn load_associated_item_tombstone(&mut self, item_id: &Uuid) -> Result<Option<item::Tombstone>, StorageError> {
+        let query = sqlx::query("
+                SELECT id, history, head_id, item_id, name, position, checked
+                FROM ?
+                WHERE item_id = ?
+            ")
+            .bind(ITEM_TOMBSTONE_TABLE)
+            .bind(item_id.as_bytes().as_slice());
+
+        let row = execute!(self, query, fetch_optional)
+            .or_raise(|| StorageError::backend_read(
+                format!("failed load tombstone from '{ITEM_TOMBSTONE_TABLE}'"))
+            )?;
+
+        let tombstone = if let Some(row) = row {
+            Some(Self::sqlite_row_to_item_tombstone(row)?)
+        } else {
+            None
+        };
+
+        Ok(tombstone)
     }
 
     fn erase_item_operation(&mut self, id: &Uuid) -> Result<item::Operation, StorageError> {
@@ -800,6 +892,24 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
         };
 
         Self::sqlite_row_to_item_operation(row)
+    }
+
+    fn erase_item_tombstone(&mut self, id: &Uuid) -> Result<item::Tombstone, StorageError> {
+        let query = sqlx::query("
+                DELETE FROM ?
+                WHERE ID = ?
+                RETURNING id, history, head_id, item_id, name, position, checked
+            ")
+            .bind(ITEM_TOMBSTONE_TABLE)
+            .bind(id.as_bytes().as_slice());
+
+        let row = execute!(self, query, fetch_optional)
+            .or_raise(|| StorageError::backend_delete(
+                format!("failed to delete tombstone from {ITEM_TOMBSTONE_TABLE}"))
+            )?
+            .ok_or_raise(|| StorageError::backend_specific("expected record, found none"))?;
+
+        Ok(Self::sqlite_row_to_item_tombstone(row)?)
     }
 }
 
