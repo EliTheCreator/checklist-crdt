@@ -59,12 +59,12 @@ type SingleMutation<T, U> = Mutation<Option<T>, Vec<U>>;
 type MultiMutation<T> = Mutation<T, T>;
 
 
-pub struct ChecklistCrdt<S: for<'a> Store<'a>> {
+pub struct ChecklistCrdt<S: Store> {
     storage: S,
     itc_stamp: Stamp
 }
 
-impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
+impl<S: Store> ChecklistCrdt<S> {
     pub fn new(mut storage: S) -> Result<Self, CrdtError> {
         let stamp = match storage.load_stamp() {
             Ok(s) => s,
@@ -74,7 +74,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
                     .or_raise(|| CrdtError::fatal("failed to save new stamp"))?;
                 stamp
             },
-            Err(_) => bail!(CrdtError::fatal("failed to load stamp")),
+            Err(e) => bail!(e.raise(CrdtError::fatal("failed to load stamp"))),
         };
 
         Ok(ChecklistCrdt {
@@ -552,7 +552,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     }
 }
 
-impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
+impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
     fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
         let mut head_operations = self.get_head_operations()?;
         head_operations.retain(|operation| !history.dominates(operation.history()));
@@ -678,7 +678,7 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
 mod test {
     use super::*;
     
-    use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use tokio::runtime::Runtime;
     use std::{future::Future, str::FromStr};
 
@@ -825,26 +825,24 @@ mod test {
     #[test]
     fn join_in_sqlite_stored_replicas() {
         let executor = TokioBlockOn::new();
-        let storage_1 = {
-            let sql_connection_options = SqliteConnectOptions::from_str("sqlite::memory:1").unwrap();
-            let sql_connection_options = sql_connection_options.in_memory(true);
-            let sqlite_pool = executor
-                .block_on(SqlitePool::connect_with(sql_connection_options))
-                .unwrap();
-            let mut connection = executor.block_on(sqlite_pool.acquire()).unwrap();
+        let sql_connection_options_1 = SqliteConnectOptions::from_str("sqlite::memory:1").unwrap();
+        let sql_connection_options_1 = sql_connection_options_1.in_memory(true)
+            .shared_cache(true);
 
-            SqliteStorage::new(&mut connection, &executor).unwrap()
-        };
-        let storage_2 = {
-            let sql_connection_options = SqliteConnectOptions::from_str("sqlite::memory:2").unwrap();
-            let sql_connection_options = sql_connection_options.in_memory(true);
-            let sqlite_pool = executor
-                .block_on(SqlitePool::connect_with(sql_connection_options))
-                .unwrap();
-            let mut connection = executor.block_on(sqlite_pool.acquire()).unwrap();
+        let mut sqlite_pool_1 = executor
+            .block_on(SqlitePoolOptions::new().max_connections(1).connect_with(sql_connection_options_1))
+            .unwrap();
 
-            SqliteStorage::new(&mut connection, &executor).unwrap()
-        };
+        let storage_1 = SqliteStorage::new(&mut sqlite_pool_1, &executor).unwrap();
+
+        let sql_connection_options_2 = SqliteConnectOptions::from_str("sqlite::memory:2").unwrap();
+        let sql_connection_options_2 = sql_connection_options_2.in_memory(true)
+            .shared_cache(true);
+        let mut sqlite_pool_2 = executor
+            .block_on(SqlitePoolOptions::new().max_connections(1).connect_with(sql_connection_options_2))
+            .unwrap();
+
+        let storage_2 = SqliteStorage::new(&mut sqlite_pool_2, &executor).unwrap();
 
         let mut crdt_1 = ChecklistCrdt::new(storage_1).unwrap();
 

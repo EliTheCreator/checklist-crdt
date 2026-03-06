@@ -183,7 +183,7 @@ impl FileStorage {
 }
 
 
-impl Store<'_> for FileStorage {
+impl Store for FileStorage {
     fn start_transaction(&mut self) -> Result<bool, StorageError> {
         let return_value = !self.in_transaction;
         self.in_transaction = true;

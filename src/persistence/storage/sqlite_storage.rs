@@ -2,8 +2,7 @@ use core::future::Future;
 use exn::{OptionExt, Result, ResultExt, bail};
 use itc::{EventTree, Stamp};
 use loro_fractional_index::FractionalIndex;
-use sqlx::pool::PoolConnection;
-use sqlx::{Connection, Row, Sqlite, Transaction};
+use sqlx::{Pool, Row, Sqlite, Transaction};
 use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 
@@ -17,7 +16,10 @@ macro_rules! execute {
         if let Some(transaction) = &mut $this.transaction {
             $this.executor.block_on($query.$method(&mut **transaction))
         } else {
-            $this.executor.block_on($query.$method(&mut **$this.sqlite_connection))
+            $this.executor.block_on(async {
+                let mut connection = $this.sqlite_pool.acquire().await.unwrap();
+                $query.$method(&mut *connection).await
+            })
         }
     };
 }
@@ -36,85 +38,86 @@ pub trait BlockOn {
 
 pub struct SqliteStorage<'a, B: BlockOn> {
     executor: &'a B,
-    sqlite_connection: &'a mut PoolConnection<Sqlite>,
+    sqlite_pool: &'a mut Pool<Sqlite>,
     transaction: Option<Transaction<'a, Sqlite>>
 }
 
 impl<'a, B: BlockOn> SqliteStorage<'a, B> {
-    pub fn new(sqlite_connection: &'a mut PoolConnection<Sqlite>, executor: &'a B) -> Result<Self, StorageError> {
-        let _ = executor.block_on(
-            sqlx::query("
-                    CREATE TABLE IF NOT EXISTS stamp (
-                        id INTEGER PRIMARY KEY CHECK (id = 0),
-                        stamp BLOB NOT NULL
-                    ) WITHOUT ROWID;
-                ")
-                .execute(&mut **sqlite_connection)
-            )
+    pub fn new(sqlite_pool: &'a mut Pool<Sqlite>, executor: &'a B) -> Result<Self, StorageError> {
+        let _ = executor.block_on(async {
+                let mut connection = sqlite_pool.acquire().await.unwrap();
+                sqlx::query("
+                        CREATE TABLE IF NOT EXISTS stamp (
+                            id INTEGER PRIMARY KEY CHECK (id = 0),
+                            stamp BLOB NOT NULL
+                        ) WITHOUT ROWID;
+                    ")
+                    .execute(&mut *connection).await
+            })
             .or_raise(|| StorageError::backend_specific("failed to create stamp table"))?;
 
         for table_name in [HEAD_OPERATION_TABLE, ITEM_OPERATION_TABLE] {
-            let _ = executor.block_on(
-                sqlx::query("
-                        CREATE TABLE IF NOT EXISTS ? (
-                            id BLOB PRIMARY KEY NOT NULL,
-                            history BLOB NOT NULL,
-                            secondary_id BLOB NOT NULL,
-                            variant INTEGER NOT NULL,
-                            payload BLOB NOT NULL
-                        ) WITHOUT ROWID;
-                    ")
-                    .bind(table_name)
-                    .execute(&mut **sqlite_connection)
-                )
+            executor.block_on(async {
+                    let mut connection = sqlite_pool.acquire().await.unwrap();
+                    sqlx::query(&format!("
+                            CREATE TABLE IF NOT EXISTS {table_name} (
+                                id BLOB PRIMARY KEY NOT NULL,
+                                history BLOB NOT NULL,
+                                secondary_id BLOB NOT NULL,
+                                variant INTEGER NOT NULL,
+                                payload BLOB NOT NULL
+                            ) WITHOUT ROWID;
+                        "))
+                        .execute(&mut *connection).await
+                })
                 .or_raise(|| StorageError::backend_specific(format!(
                     "failed to create '{table_name}' table"
                 )))?;
         }
 
-        let _ = executor.block_on(
-            sqlx::query("
-                    CREATE TABLE IF NOT EXISTS ? (
-                        id BLOB PRIMARY KEY NOT NULL,
-                        history BLOB NOT NULL,
-                        head_id BLOB NOT NULL,
-                        template_id BLOB,
-                        name TEXT NOT NULL,
-                        description TEXT,
-                        completed BOOLEAN NOT NULL
-                    ) WITHOUT ROWID;
-                ")
-                .bind(HEAD_TOMBSTONE_TABLE)
-                .execute(&mut **sqlite_connection)
-            )
+        let _ = executor.block_on(async {
+                let mut connection = sqlite_pool.acquire().await.unwrap();
+                sqlx::query(&format!("
+                        CREATE TABLE IF NOT EXISTS {HEAD_TOMBSTONE_TABLE} (
+                            id BLOB PRIMARY KEY NOT NULL,
+                            history BLOB NOT NULL,
+                            head_id BLOB NOT NULL,
+                            template_id BLOB,
+                            name TEXT NOT NULL,
+                            description TEXT,
+                            completed BOOLEAN NOT NULL
+                        ) WITHOUT ROWID;
+                    "))
+                    .execute(&mut *connection).await
+            })
             .or_raise(|| StorageError::backend_specific(format!(
                 "failed to create '{HEAD_TOMBSTONE_TABLE}' table")
             ))?;
 
-        let _ = executor.block_on(
-            sqlx::query("
-                    CREATE TABLE IF NOT EXISTS ? (
-                        id BLOB PRIMARY KEY NOT NULL,
-                        history BLOB NOT NULL,
-                        head_id BLOB NOT NULL,
-                        item_id BLOB NOT NULL,
-                        name TEXT NOT NULL,
-                        position BLOB NOT NULL,
-                        checked BOOLEAN NOT NULL
-                    ) WITHOUT ROWID;
-                ")
-                .bind(ITEM_TOMBSTONE_TABLE)
-                .execute(&mut **sqlite_connection)
-            )
+        let _ = executor.block_on(async {
+                let mut connection = sqlite_pool.acquire().await.unwrap();
+                sqlx::query(&format!("
+                        CREATE TABLE IF NOT EXISTS {ITEM_TOMBSTONE_TABLE} (
+                            id BLOB PRIMARY KEY NOT NULL,
+                            history BLOB NOT NULL,
+                            head_id BLOB NOT NULL,
+                            item_id BLOB NOT NULL,
+                            name TEXT NOT NULL,
+                            position BLOB NOT NULL,
+                            checked BOOLEAN NOT NULL
+                        ) WITHOUT ROWID;
+                    "))
+                    .execute(&mut *connection).await
+            })
             .or_raise(|| StorageError::backend_specific(format!(
                 "failed to create '{ITEM_TOMBSTONE_TABLE}' table")
             ))?;
 
-        Ok(Self { executor, sqlite_connection, transaction: None })
+        Ok(Self { executor, sqlite_pool, transaction: None })
     }
 
     fn usize_to_vec_u8(mut num: usize) -> Vec<u8> {
-        let mask: usize = 1<<7 - 1;
+        let mask: usize = (1<<7) - 1;
 
         let mut binary = Vec::new();
         while num != 0 {
@@ -203,7 +206,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
     }
 
     fn usize_from_payload(payload: &[u8]) -> (usize, usize) {
-        let mask: u8 = 1<<7 - 1;
+        let mask: u8 = (1<<7) - 1;
         let mut bytes = 0;
         let mut num = 0;
 
@@ -234,7 +237,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         let variant: u8 = row.try_get("variant")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'variant' field"))?;
 
-        let associated_id_bytes: &[u8] = row.try_get("associated_id")
+        let associated_id_bytes: &[u8] = row.try_get("secondary_id")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'associated_id' field"))?;
         let associated_id = if associated_id_bytes.len() != 0 {
             Some(Uuid::from_slice(associated_id_bytes)
@@ -364,7 +367,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         let variant: u8 = row.try_get("variant")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'variant' field"))?;
 
-        let associated_id_bytes: &[u8] = row.try_get("associated_id")
+        let associated_id_bytes: &[u8] = row.try_get("secondary_id")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'associated_id' field"))?;
         let associated_id = Uuid::from_slice(associated_id_bytes)
             .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
@@ -454,13 +457,13 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         variant: u8,
         payload: Vec<u8>
     ) -> Result<(), StorageError> {
-        let query = sqlx::query("
-                INSERT INTO ?
-                (id, history, secondary_id, variant, payload)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO NOTHING
-            ")
-            .bind(table_name)
+        let query_text = format!("
+            INSERT INTO {table_name}
+            (id, history, secondary_id, variant, payload)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO NOTHING
+        ");
+        let query = sqlx::query(&query_text)
             .bind(id)
             .bind(history)
             .bind(secondary_id)
@@ -476,13 +479,12 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
     }
 
     fn load_operations_from(&mut self, table_name: &str) -> Result<Vec<SqliteRow>, StorageError> {
-        let query = sqlx::query("
-                SELECT id, history, secondary_id, variant, payload
-                FROM ?
-            ")
-            .bind(table_name);
+        let query = format!("
+            SELECT id, history, secondary_id, variant, payload
+            FROM {table_name}
+        ");
 
-        execute!(self, query, fetch_all)
+        execute!(self, sqlx::query(&query), fetch_all)
             .or_raise(|| StorageError::backend_read(
                 format!("failed load operations from '{table_name}'"))
             )
@@ -507,12 +509,12 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         table_name: &str,
         associated_id: &Uuid,
     ) -> Result<Vec<SqliteRow>, StorageError> {
-        let query = sqlx::query("
-                SELECT id, history, secondary_id, variant, payload
-                FROM ?
-                WHERE id = ? OR secondary_id = ?
-            ")
-            .bind(table_name)
+        let query_text = format!("
+            SELECT id, history, secondary_id, variant, payload
+            FROM {table_name}
+            WHERE id = ? OR secondary_id = ?
+        ");
+        let query = sqlx::query(&query_text)
             .bind(associated_id.as_bytes().as_slice())
             .bind(associated_id.as_bytes().as_slice());
 
@@ -549,12 +551,12 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         table_name: &str,
         id: &Uuid
     ) -> Result<SqliteRow, StorageError> {
-        let query = sqlx::query("
-                DELETE FROM ?
-                WHERE ID = ?
-                RETURNING id, history, secondary_id, variant, payload
-            ")
-            .bind(table_name)
+        let query_text = format!("
+            DELETE FROM {table_name}
+            WHERE ID = ?
+            RETURNING id, history, secondary_id, variant, payload
+        ");
+        let query = sqlx::query(&query_text)
             .bind(id.as_bytes().as_slice());
 
         execute!(self, query, fetch_optional)
@@ -565,15 +567,13 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
     }
 }
 
-impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
-    fn start_transaction(&'a mut self) -> Result<bool, StorageError> {
+impl<'a, B: BlockOn> Store for SqliteStorage<'a, B> {
+    fn start_transaction(&mut self) -> Result<bool, StorageError> {
         if self.transaction.is_some() {
             return Ok(false)
         }
 
-        self.transaction = Some(self.executor.block_on(
-                self.sqlite_connection.begin()
-            )
+        self.transaction = Some(self.executor.block_on(self.sqlite_pool.begin())
             .or_raise(|| StorageError::backend_specific("failed to start transaction"))?);
         Ok(true)
     }
@@ -592,9 +592,7 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
 
     fn commit_transaction(&mut self) -> Result<bool, StorageError> {
         if let Some(transaction) = self.transaction.take() {
-            self.executor.block_on(
-                    transaction.commit()
-                )
+            self.executor.block_on(transaction.commit())
                 .or_raise(|| StorageError::backend_specific("failed to commit transaction"))?;
             Ok(true)
         } else {
@@ -603,43 +601,41 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn save_stamp(&mut self, stamp: &Stamp) -> Result<(), StorageError> {
-        let query = sqlx::query(
-                r#"
-                    INSERT INTO stamp (id, stamp)
-                    VALUES (0, ?)
-                    ON CONFLICT(ID)
-                    DO UPDATE SET stamp = excluded.stamp
-                "#
-            )
+        let query = sqlx::query("
+                INSERT INTO stamp (id, stamp)
+                VALUES (0, ?)
+                ON CONFLICT(ID)
+                DO UPDATE SET stamp = excluded.stamp
+            ")
             .bind(Into::<Box<[u8]>>::into(stamp));
 
-        let _ = self.executor.block_on(
-                query
-                    .execute(&mut **self.sqlite_connection)
-            )
+        let _ = execute!(self, query, execute)
             .or_raise(|| StorageError::backend_write("failed to save stamp"))?;
+        // let _ = self.executor.block_on(async {
+        //         let mut connection = self.sqlite_pool.acquire().await.unwrap();
+        //         query.execute(&mut *connection).await
+        //     })
+        //     .or_raise(|| StorageError::backend_write("failed to save stamp"))?;
 
         Ok(())
     }
 
     fn load_stamp(&mut self) -> Result<Stamp, StorageError> {
-        let query = sqlx::query(
-                r#"
-                    SELECT stamp
-                    FROM stamp
-                    WHERE id = 0
-                "#
-            );
+        let query = sqlx::query("
+            SELECT stamp
+            FROM stamp
+            WHERE id = 0
+        ");
 
-        let row = self.executor.block_on(
-                query
-                    .fetch_optional(&mut **self.sqlite_connection)
-            )
+        let row = self.executor.block_on(async {
+                let mut connection = self.sqlite_pool.acquire().await.unwrap();
+                query.fetch_optional(&mut *connection).await
+            })
             .or_raise(|| StorageError::backend_read("failed to load stamp"))?
             .ok_or_raise(|| StorageError::stamp_none("expected stamp record, found none"))?;
 
         let stamp_slice: &[u8] = row.try_get("stamp")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'stamp' field"))?;
+        .or_raise(|| StorageError::backend_specific("failed to retrieve 'stamp' field"))?;
 
         Stamp::try_from(stamp_slice)
             .or_raise(|| StorageError::stamp_invalid("unable to parse stamp"))
@@ -667,13 +663,13 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn save_head_tombstone(&mut self, tombstone: head::Tombstone) -> Result<(), StorageError> {
-        let query = sqlx::query("
-                INSERT INTO ?
-                (id, history, head_id, template_id, name, description, completed)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO NOTHING
-            ")
-            .bind(HEAD_TOMBSTONE_TABLE)
+        let query_text = format!("
+            INSERT INTO {HEAD_TOMBSTONE_TABLE}
+            (id, history, head_id, template_id, name, description, completed)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO NOTHING
+        ");
+        let query = sqlx::query(&query_text)
             .bind(tombstone.id.as_bytes().as_slice())
             .bind(Into::<Box<[u8]>>::into(tombstone.history))
             .bind(tombstone.head_id.as_bytes().as_slice())
@@ -691,22 +687,16 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn load_head_operations(&mut self) -> Result<Vec<head::Operation>, StorageError> {
-        let mut operations = Vec::new();
-        for table_name in [HEAD_TOMBSTONE_TABLE, HEAD_OPERATION_TABLE] {
-            operations.extend(self.load_head_operations_from(table_name)?);
-        }
-
-        Ok(operations)
+        self.load_head_operations_from(HEAD_OPERATION_TABLE)
     }
 
     fn load_head_tombstones(&mut self) -> Result<Vec<head::Tombstone>, StorageError> {
-        let query = sqlx::query("
+        let query_text = format!("
                 SELECT id, history, head_id, template_id, name, description, completed
-                FROM ?
-            ")
-            .bind(HEAD_TOMBSTONE_TABLE);
+                FROM {HEAD_TOMBSTONE_TABLE}
+            ");
 
-        execute!(self, query, fetch_all)
+        execute!(self, sqlx::query(&query_text), fetch_all)
             .or_raise(|| StorageError::backend_read(
                 format!("failed load tombstones from '{HEAD_TOMBSTONE_TABLE}'"))
             )?
@@ -716,21 +706,16 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn load_associated_head_operations(&mut self, head_id: &Uuid) -> Result<Vec<head::Operation>, StorageError> {
-        let mut operations = Vec::new();
-        for table_name in [HEAD_TOMBSTONE_TABLE, HEAD_OPERATION_TABLE] {
-            operations.extend(self.load_associated_head_operations_from(table_name, head_id)?);
-        }
-
-        Ok(operations)
+        self.load_associated_head_operations_from(HEAD_OPERATION_TABLE, head_id)
     }
 
     fn load_associated_head_tombstone(&mut self, head_id: &Uuid) -> Result<Option<head::Tombstone>, StorageError> {
-        let query = sqlx::query("
-                SELECT id, history, head_id, template_id, name, description, completed
-                FROM ?
-                WHERE head_id = ?
-            ")
-            .bind(HEAD_TOMBSTONE_TABLE)
+        let query_text = format!("
+            SELECT id, history, head_id, template_id, name, description, completed
+            FROM {HEAD_TOMBSTONE_TABLE}
+            WHERE head_id = ?
+        ");
+        let query = sqlx::query(&query_text)
             .bind(head_id.as_bytes().as_slice());
 
         let row = execute!(self, query, fetch_optional)
@@ -760,12 +745,12 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn erase_head_tombstone(&mut self, id: &Uuid) -> Result<head::Tombstone, StorageError> {
-        let query = sqlx::query("
-                DELETE FROM ?
-                WHERE ID = ?
-                RETURNING id, history, head_id, template_id, name, description, completed
-            ")
-            .bind(HEAD_TOMBSTONE_TABLE)
+        let query_text = format!("
+            DELETE FROM {HEAD_TOMBSTONE_TABLE}
+            WHERE ID = ?
+            RETURNING id, history, head_id, template_id, name, description, completed
+        ");
+        let query = sqlx::query(&query_text)
             .bind(id.as_bytes().as_slice());
 
         let row = execute!(self, query, fetch_optional)
@@ -789,13 +774,13 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn save_item_tombstone(&mut self, tombstone: item::Tombstone) -> Result<(), StorageError> {
-        let query = sqlx::query("
-                INSERT INTO ?
-                (id, history, head_id, item_id, name, position, checked)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO NOTHING
-            ")
-            .bind(HEAD_TOMBSTONE_TABLE)
+        let query_text = format!("
+            INSERT INTO {HEAD_TOMBSTONE_TABLE}
+            (id, history, head_id, item_id, name, position, checked)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO NOTHING
+        ");
+        let query = sqlx::query(&&query_text)
             .bind(tombstone.id.as_bytes().as_slice())
             .bind(Into::<Box<[u8]>>::into(tombstone.history))
             .bind(tombstone.head_id.as_bytes().as_slice())
@@ -813,22 +798,16 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn load_item_operations(&mut self) -> Result<Vec<item::Operation>, StorageError> {
-        let mut operations = Vec::new();
-        for table_name in [ITEM_TOMBSTONE_TABLE, ITEM_OPERATION_TABLE] {
-            operations.extend(self.load_item_operations_from(table_name)?);
-        }
-
-        Ok(operations)
+        self.load_item_operations_from(ITEM_OPERATION_TABLE)
     }
 
     fn load_item_tombstones(&mut self) -> Result<Vec<item::Tombstone>, StorageError> {
-        let query = sqlx::query("
-                SELECT id, history, head_id, item_id, name, position, checked
-                FROM ?
-            ")
-            .bind(ITEM_TOMBSTONE_TABLE);
+        let query_text = format!("
+            SELECT id, history, head_id, item_id, name, position, checked
+            FROM {ITEM_TOMBSTONE_TABLE}
+        ");
 
-        execute!(self, query, fetch_all)
+        execute!(self, sqlx::query(&query_text), fetch_all)
             .or_raise(|| StorageError::backend_read(
                 format!("failed load tombstones from '{ITEM_TOMBSTONE_TABLE}'"))
             )?
@@ -838,21 +817,16 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn load_associated_item_operations(&mut self, item_id: &Uuid) -> Result<Vec<item::Operation>, StorageError> {
-        let mut operations = Vec::new();
-        for table_name in [ITEM_TOMBSTONE_TABLE, ITEM_OPERATION_TABLE] {
-            operations.extend(self.load_associated_item_operations_from(table_name, item_id)?);
-        }
-
-        Ok(operations)
+        self.load_associated_item_operations_from(ITEM_OPERATION_TABLE, item_id)
     }
 
     fn load_associated_item_tombstone(&mut self, item_id: &Uuid) -> Result<Option<item::Tombstone>, StorageError> {
-        let query = sqlx::query("
-                SELECT id, history, head_id, item_id, name, position, checked
-                FROM ?
-                WHERE item_id = ?
-            ")
-            .bind(ITEM_TOMBSTONE_TABLE)
+        let query_text = format!("
+            SELECT id, history, head_id, item_id, name, position, checked
+            FROM {ITEM_TOMBSTONE_TABLE}
+            WHERE item_id = ?
+        ");
+        let query = sqlx::query(&query_text)
             .bind(item_id.as_bytes().as_slice());
 
         let row = execute!(self, query, fetch_optional)
@@ -882,12 +856,12 @@ impl<'a, B: BlockOn> Store<'a> for SqliteStorage<'a, B> {
     }
 
     fn erase_item_tombstone(&mut self, id: &Uuid) -> Result<item::Tombstone, StorageError> {
-        let query = sqlx::query("
-                DELETE FROM ?
-                WHERE ID = ?
-                RETURNING id, history, head_id, item_id, name, position, checked
-            ")
-            .bind(ITEM_TOMBSTONE_TABLE)
+        let query_text = format!("
+            DELETE FROM {ITEM_TOMBSTONE_TABLE}
+            WHERE ID = ?
+            RETURNING id, history, head_id, item_id, name, position, checked
+        ");
+        let query = sqlx::query(&query_text)
             .bind(id.as_bytes().as_slice());
 
         let row = execute!(self, query, fetch_optional)
@@ -930,15 +904,12 @@ mod tests {
         let executor = TokioBlockOn::new();
         let sql_connection_options = SqliteConnectOptions::from_str("sqlite::memory:").unwrap();
         let sql_connection_options = sql_connection_options.in_memory(true);
-        let sqlite_pool = executor
+        let mut sqlite_pool = executor
             .block_on(SqlitePool::connect_with(sql_connection_options))
             .unwrap();
-        let mut connection = executor.block_on(sqlite_pool.acquire()).unwrap();
-        let mut storage = SqliteStorage::new(&mut connection, &executor).unwrap();
+        let mut storage = SqliteStorage::new(&mut sqlite_pool, &executor).unwrap();
 
         storage.save_stamp(&Stamp::seed()).unwrap();
         let _ = storage.load_stamp().unwrap();
-        executor.block_on(async {drop(storage)});
-        executor.block_on(async {drop(connection)});
     }
 }
