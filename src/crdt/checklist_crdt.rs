@@ -38,15 +38,19 @@ macro_rules! transaction {
 #[derive(Debug, PartialEq)]
 pub struct ChecklistOperations {
     head_operations: Vec<head::Operation>,
+    head_tombstones: Vec<head::Tombstone>,
     item_operations: Vec<item::Operation>,
+    item_tombstones: Vec<item::Tombstone>,
 }
 
 impl ChecklistOperations {
     pub fn new(
         head_operations: Vec<head::Operation>,
+        head_tombstones: Vec<head::Tombstone>,
         item_operations: Vec<item::Operation>,
+        item_tombstones: Vec<item::Tombstone>,
     ) -> Self {
-        Self { head_operations, item_operations }
+        Self { head_operations, head_tombstones, item_operations, item_tombstones }
     }
 }
 
@@ -153,37 +157,42 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
 
     fn save_head_tombstone(
         &mut self,
-        mut tombstone_builder: head::TombstoneBuilder
-    ) -> Result<SingleMutation<head::Tombstone, head::Operation>, CrdtError> {
-        let obsolete_ops = self.storage
-            .load_associated_head_operations(&tombstone_builder.head_id)
-            .map_err(|e|
-                self.abort_transaction(e, "crdt unable to load associated head operations")
-            )?;
+        tombstone: head::Tombstone
+    ) -> Result<SingleMutation<head::Tombstone, head::Tombstone>, CrdtError> {
+        let associated_tombstone = self.storage
+            .load_associated_head_tombstone(&tombstone.head_id)
+            .or_raise(|| CrdtError::recovered("crdt unable to load associated head tombstone"))?;
 
-        for obsolete_op in obsolete_ops.iter() {
-            tombstone_builder = tombstone_builder.apply(obsolete_op)
-                .or_raise(|| CrdtError::recoverable("crdt unable to build tombstone"))?;
+        let mut return_tombstone = None;
+        let mut obsolete_tombstones = Vec::new();
+        if let Some(assoc_tombstone) = associated_tombstone {
+            let replace_tombstone = match tombstone.history.partial_cmp(&assoc_tombstone.history) {
+                Some(Ordering::Less) => true,
+                None if tombstone.id < assoc_tombstone.id => true,
+                _ => false,
+            };
+
+            if replace_tombstone {
+                let obsolete_tombstone = self.erase_head_tombstone(&assoc_tombstone.id)
+                    .map_err(|e|
+                        self.abort_transaction(e.raise(StorageError::backend_specific("")), "crdt unable to store erase tombstone")
+                    )?;
+                obsolete_tombstones.push(obsolete_tombstone);
+
+                return_tombstone = Some(tombstone);
+            }
+        } else {
+            return_tombstone = Some(tombstone);
+        };
+
+        if let Some(tombstone) = &return_tombstone {
+            self.storage.save_head_tombstone(tombstone.clone())
+                .map_err(|e|
+                    self.abort_transaction(e, "crdt unable to store head tombstone")
+                )?;
         }
 
-        let tombstone = tombstone_builder.build()
-            .map_err(|e|
-                self.abort_transaction(
-                    e.raise(StorageError::backend_specific("crdt unable to build tombstone")),
-                    "crdt unable to build head tombstone"
-                )
-            )?;
-
-        let obsolete_ops = obsolete_ops.into_iter()
-            .map(|obsolete_op| self.erase_head_operation(obsolete_op.id()))
-            .collect::<Result<Vec<head::Operation>, CrdtError>>()?;
-
-        self.storage.save_head_tombstone(tombstone.clone())
-            .map_err(|e|
-                self.abort_transaction(e, "crdt unable to store head tombstone")
-            )?;
-
-        Ok(SingleMutation::new(Some(tombstone), obsolete_ops))
+        Ok(SingleMutation::new(return_tombstone, obsolete_tombstones))
     }
 
     fn erase_head_operation(&mut self, id: &Uuid) -> Result<head::Operation, CrdtError> {
@@ -268,15 +277,50 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     pub fn delete_head(
         &mut self,
         head_id: &Uuid,
-    ) -> Result<SingleMutation<head::Tombstone, head::Operation>, CrdtError> {
+    ) -> Result<(Option<head::Tombstone>, ChecklistOperations), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let tombstone_builder = head::TombstoneBuilder::new(
+        let mut tombstone_builder = head::TombstoneBuilder::new(
             Uuid::now_v7(),
             stamp.history(),
             head_id,
         );
 
-        transaction!(self, stamp, { self.save_head_tombstone(tombstone_builder) })
+        transaction!(self, stamp, {
+            let obsolete_ops = self.storage
+                .load_associated_head_operations(&tombstone_builder.head_id)
+                .map_err(|e|
+                    self.abort_transaction(e, "crdt unable to load associated head operations")
+                )?;
+
+            for obsolete_op in obsolete_ops.iter() {
+                tombstone_builder = tombstone_builder.apply(obsolete_op)
+                    .or_raise(|| CrdtError::recoverable("crdt unable to build tombstone"))?;
+            }
+
+            let tombstone = tombstone_builder.build()
+                .map_err(|e|
+                    self.abort_transaction(
+                        e.raise(StorageError::backend_specific("crdt unable to build tombstone")),
+                        "crdt unable to build head tombstone"
+                    )
+                )?;
+
+            let obsolete_ops = obsolete_ops.into_iter()
+                .map(|obsolete_op| self.erase_head_operation(obsolete_op.id()))
+                .collect::<Result<Vec<head::Operation>, CrdtError>>()?;
+
+            let result = self.save_head_tombstone(tombstone)?;
+
+            Ok((
+                result.add,
+                ChecklistOperations::new(
+                    obsolete_ops,
+                    result.remove,
+                    Vec::new(),
+                    Vec::new(),
+                )
+            ))
+        })
     }
 
     pub fn get_head_operations(&mut self) -> Result<Vec<head::Operation>, CrdtError> {
@@ -331,37 +375,42 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
 
     fn save_item_tombstone(
         &mut self,
-        mut tombstone_builder: item::TombstoneBuilder
-    ) -> Result<SingleMutation<item::Tombstone, item::Operation>, CrdtError> {
-        let obsolete_ops = self.storage
-            .load_associated_item_operations(&tombstone_builder.item_id)
-            .map_err(|e|
-                self.abort_transaction(e, "crdt unable to load associated item operations")
-            )?;
+        tombstone: item::Tombstone
+    ) -> Result<SingleMutation<item::Tombstone, item::Tombstone>, CrdtError> {
+        let associated_tombstone = self.storage
+            .load_associated_item_tombstone(&tombstone.item_id)
+            .or_raise(|| CrdtError::recovered("crdt unable to load associated item tombstone"))?;
 
-        for obsolete_op in obsolete_ops.iter() {
-            tombstone_builder = tombstone_builder.apply(obsolete_op)
-                .or_raise(|| CrdtError::recoverable("crdt unable to build tombstone"))?;
+        let mut return_tombstone = None;
+        let mut obsolete_tombstones = Vec::new();
+        if let Some(assoc_tombstone) = associated_tombstone {
+            let replace_tombstone = match tombstone.history.partial_cmp(&assoc_tombstone.history) {
+                Some(Ordering::Less) => true,
+                None if tombstone.id < assoc_tombstone.id => true,
+                _ => false,
+            };
+
+            if replace_tombstone {
+                let obsolete_tombstone = self.erase_item_tombstone(&assoc_tombstone.id)
+                    .map_err(|e|
+                        self.abort_transaction(e.raise(StorageError::backend_specific("")), "crdt unable to store erase tombstone")
+                    )?;
+                obsolete_tombstones.push(obsolete_tombstone);
+
+                return_tombstone = Some(tombstone);
+            }
+        } else {
+            return_tombstone = Some(tombstone);
+        };
+
+        if let Some(tombstone) = &return_tombstone {
+            self.storage.save_item_tombstone(tombstone.clone())
+                .map_err(|e|
+                    self.abort_transaction(e, "crdt unable to store item tombstone")
+                )?;
         }
 
-        let tombstone = tombstone_builder.build()
-            .map_err(|e|
-                self.abort_transaction(
-                    e.raise(StorageError::backend_specific("crdt unable to build tombstone")),
-                    "crdt unable to build item tombstone"
-                )
-            )?;
-
-        let obsolete_ops = obsolete_ops.into_iter()
-            .map(|obsolete_op| self.erase_item_operation(obsolete_op.id()))
-            .collect::<Result<Vec<item::Operation>, CrdtError>>()?;
-
-        self.storage.save_item_tombstone(tombstone.clone())
-            .map_err(|e|
-                self.abort_transaction(e, "crdt unable to store item tombstone")
-            )?;
-
-        Ok(SingleMutation::new(Some(tombstone), obsolete_ops))
+        Ok(SingleMutation::new(return_tombstone, obsolete_tombstones))
     }
 
     fn erase_item_operation(&mut self, id: &Uuid) -> Result<item::Operation, CrdtError> {
@@ -446,15 +495,50 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     pub fn delete_item(
         &mut self,
         item_id: &Uuid,
-    ) -> Result<SingleMutation<item::Tombstone, item::Operation>, CrdtError> {
+    ) -> Result<(Option<item::Tombstone>, ChecklistOperations), CrdtError> {
         let stamp = self.itc_stamp.event();
-        let tombstone_builder = item::TombstoneBuilder::new(
+        let mut tombstone_builder = item::TombstoneBuilder::new(
             Uuid::now_v7(),
             stamp.history(),
             item_id,
         );
 
-        transaction!(self, stamp, { self.save_item_tombstone(tombstone_builder) })
+        transaction!(self, stamp, {
+            let obsolete_ops = self.storage
+                .load_associated_item_operations(&tombstone_builder.item_id)
+                .map_err(|e|
+                    self.abort_transaction(e, "crdt unable to load associated item operations")
+                )?;
+
+            for obsolete_op in obsolete_ops.iter() {
+                tombstone_builder = tombstone_builder.apply(obsolete_op)
+                    .or_raise(|| CrdtError::recoverable("crdt unable to build tombstone"))?;
+            }
+
+            let tombstone = tombstone_builder.build()
+                .map_err(|e|
+                    self.abort_transaction(
+                        e.raise(StorageError::backend_specific("crdt unable to build tombstone")),
+                        "crdt unable to build item tombstone"
+                    )
+                )?;
+
+            let obsolete_ops = obsolete_ops.into_iter()
+                .map(|obsolete_op| self.erase_item_operation(obsolete_op.id()))
+                .collect::<Result<Vec<item::Operation>, CrdtError>>()?;
+
+            let result = self.save_item_tombstone(tombstone)?;
+
+            Ok((
+                result.add,
+                ChecklistOperations::new(
+                    Vec::new(),
+                    Vec::new(),
+                    obsolete_ops,
+                    result.remove,
+                )
+            ))
+        })
     }
 
     pub fn get_item_operations(&mut self) -> Result<Vec<item::Operation>, CrdtError> {
@@ -471,24 +555,25 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
 impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
     fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
         let mut head_operations = self.get_head_operations()?;
-        head_operations.retain(|head| {
-            match history.partial_cmp(head.history()) {
-                Some(ordering) => ordering == Ordering::Less,
-                None => true,
-            }
-        });
+        head_operations.retain(|operation| !history.dominates(operation.history()));
+
+        let mut head_tombstones = self.get_head_tombstones()?;
+        head_tombstones.retain(|tombstone| !history.dominates(&tombstone.history));
 
         let mut item_operations = self.get_item_operations()?;
-        item_operations.retain(|item| {
-            match history.partial_cmp(item.history()) {
-                Some(ordering) => ordering == Ordering::Less,
-                None => true,
-            }
-        });
+        item_operations.retain(|operation| !history.dominates(operation.history()));
+
+        let mut item_tombstones = self.get_item_tombstones()?;
+        item_tombstones.retain(|tombstone| !history.dominates(&tombstone.history));
 
         let local_history = self.itc_stamp.history();
 
-        let operations = ChecklistOperations::new(head_operations, item_operations);
+        let operations = ChecklistOperations::new(
+            head_operations,
+            head_tombstones,
+            item_operations,
+            item_tombstones,
+        );
         Ok(OperationDelta::new(history, local_history, operations))
     }
 
@@ -511,15 +596,23 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
     fn fork(&mut self) -> Result<ReplicaState<ChecklistOperations>, CrdtError> {
         let (stamp, replica_stamp) = self.itc_stamp.fork();
         let head_operations = self.get_head_operations()?;
+        let head_tombstones = self.get_head_tombstones()?;
         let item_operations = self.get_item_operations()?;
+        let item_tombstones = self.get_item_tombstones()?;
 
         transaction!(self, stamp, { Ok(()) })?;
-        let operations = ChecklistOperations::new(head_operations, item_operations);
+
         let delta = OperationDelta::new(
             EventTree::zero(),
             self.itc_stamp.history().clone(),
-            operations
+            ChecklistOperations::new(
+                head_operations,
+                head_tombstones,
+                item_operations,
+                item_tombstones,
+            )
         );
+
         Ok(ReplicaState::new(replica_stamp, delta))
     }
 
@@ -538,9 +631,13 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
                 remove_head_operations.extend(remove);
             }
 
-            let add_head_operations = add_head_operations.into_iter()
-                .flatten()
-                .collect();
+            let mut add_head_tombstones = Vec::new();
+            let mut remove_head_tombstones = Vec::new();
+            for tombstone in replica_state.delta.operations.head_tombstones {
+                let (add, remove) = self.save_head_tombstone(tombstone)?.destruct();
+                add_head_tombstones.push(add);
+                remove_head_tombstones.extend(remove);
+            }
 
             let mut add_item_operations = Vec::new();
             let mut remove_item_operations = Vec::new();
@@ -550,12 +647,26 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
                 remove_item_operations.extend(remove);
             }
 
-            let add_item_operations = add_item_operations.into_iter()
-                .flatten()
-                .collect();
+            let mut add_item_tombstones = Vec::new();
+            let mut remove_item_tombstones = Vec::new();
+            for tombstone in replica_state.delta.operations.item_tombstones {
+                let (add, remove) = self.save_item_tombstone(tombstone)?.destruct();
+                add_item_tombstones.push(add);
+                remove_item_tombstones.extend(remove);
+            }
 
-            let add_operations = ChecklistOperations::new(add_head_operations, add_item_operations);
-            let remove_operations = ChecklistOperations::new(remove_head_operations, remove_item_operations);
+            let add_operations = ChecklistOperations::new(
+                add_head_operations.into_iter().flatten().collect(),
+                add_head_tombstones.into_iter().flatten().collect(),
+                add_item_operations.into_iter().flatten().collect(),
+                add_item_tombstones.into_iter().flatten().collect(),
+            );
+            let remove_operations = ChecklistOperations::new(
+                remove_head_operations,
+                remove_head_tombstones,
+                remove_item_operations,
+                remove_item_tombstones,
+            );
 
             Ok(Mutation::new(add_operations, remove_operations))
         })
@@ -565,9 +676,30 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
 
 #[cfg(test)]
 mod test {
-    use crate::persistence::storage::{FileStorage, InMemoryStorage};
-
     use super::*;
+    
+    use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+    use tokio::runtime::Runtime;
+    use std::{future::Future, str::FromStr};
+
+    use crate::persistence::storage::{BlockOn, FileStorage, InMemoryStorage, SqliteStorage};
+
+
+    pub struct TokioBlockOn {
+        runtime: Runtime,
+    }
+
+    impl TokioBlockOn {
+        pub fn new() -> Self {
+            Self { runtime: Runtime::new().unwrap() }
+        }
+    }
+
+    impl BlockOn for TokioBlockOn {
+        fn block_on<F: Future>(&self, fut: F) -> F::Output {
+            self.runtime.block_on(fut)
+        }
+    }
 
     #[test]
     fn add_items() {
@@ -624,7 +756,9 @@ mod test {
             InMemoryStorage::new_from(
                 replica_data.stamp,
                 replica_data.delta.operations.head_operations,
-                replica_data.delta.operations.item_operations
+                replica_data.delta.operations.head_tombstones,
+                replica_data.delta.operations.item_operations,
+                replica_data.delta.operations.item_tombstones,
             ),
         ).unwrap();
 
@@ -652,6 +786,66 @@ mod test {
     fn join_in_file_stored_replicas() {
         let storage_1 = FileStorage::new("stamp_1.txt", "head_1.txt", "item_1.txt").unwrap();
         let storage_2 = FileStorage::new("stamp_2.txt", "head_2.txt", "item_2.txt").unwrap();
+        let mut crdt_1 = ChecklistCrdt::new(storage_1).unwrap();
+
+        let head_id = crdt_1
+            .add_head(None, "A".into(), Some("ab c de".into()))
+            .unwrap().add.unwrap().id().clone();
+        let position = FractionalIndex::default();
+        let first = crdt_1
+            .add_item(head_id.clone(), "1.".into(), position.clone())
+            .unwrap().add.unwrap().id().clone();
+        let second = crdt_1
+            .add_item(head_id.clone(), "2.".into(), FractionalIndex::new_after(&position))
+            .unwrap().add.unwrap().id().clone();
+
+        let replica_data = crdt_1.fork().unwrap();
+        let mut crdt_2 = ChecklistCrdt::new_from(storage_2, replica_data).unwrap();
+
+        crdt_1.update_head_name(&head_id, "B".into()).unwrap();
+        crdt_2.update_head_name(&head_id, "C".into()).unwrap();
+
+        crdt_1.update_item_checked(&first, true).unwrap();
+        crdt_2.update_item_checked(&second, true).unwrap();
+        crdt_2.update_item_name(&second, "3.2".into()).unwrap();
+        crdt_1.update_item_name(&second, "3.1".into()).unwrap();
+
+        let delta_1_2 = crdt_1.get_delta_since(crdt_2.itc_stamp.history()).unwrap();
+        let delta_2_1 = crdt_2.get_delta_since(crdt_1.itc_stamp.history()).unwrap();
+        assert_ne!(delta_1_2, delta_2_1);
+
+        crdt_1.apply_delta(delta_2_1).unwrap();
+        crdt_2.apply_delta(delta_1_2).unwrap();
+
+        let replica_1 = crdt_1.fork().unwrap();
+        let replica_2 = crdt_2.fork().unwrap();
+        assert_eq!(replica_1.delta.operations, replica_2.delta.operations);
+    }
+
+    #[test]
+    fn join_in_sqlite_stored_replicas() {
+        let executor = TokioBlockOn::new();
+        let storage_1 = {
+            let sql_connection_options = SqliteConnectOptions::from_str("sqlite::memory:1").unwrap();
+            let sql_connection_options = sql_connection_options.in_memory(true);
+            let sqlite_pool = executor
+                .block_on(SqlitePool::connect_with(sql_connection_options))
+                .unwrap();
+            let mut connection = executor.block_on(sqlite_pool.acquire()).unwrap();
+
+            SqliteStorage::new(&mut connection, &executor).unwrap()
+        };
+        let storage_2 = {
+            let sql_connection_options = SqliteConnectOptions::from_str("sqlite::memory:2").unwrap();
+            let sql_connection_options = sql_connection_options.in_memory(true);
+            let sqlite_pool = executor
+                .block_on(SqlitePool::connect_with(sql_connection_options))
+                .unwrap();
+            let mut connection = executor.block_on(sqlite_pool.acquire()).unwrap();
+
+            SqliteStorage::new(&mut connection, &executor).unwrap()
+        };
+
         let mut crdt_1 = ChecklistCrdt::new(storage_1).unwrap();
 
         let head_id = crdt_1

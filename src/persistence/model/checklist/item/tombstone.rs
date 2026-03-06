@@ -121,7 +121,7 @@ impl Display for TombstoneBuilderError {
 
 impl Error for TombstoneBuilderError {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tombstone {
     pub id: Uuid,
     pub history: EventTree,

@@ -60,7 +60,7 @@ impl<T> ReplicaState<T> {
 
 
 pub trait Crdt<T, E>
-where E: Error + Send + Sync
+    where E: Error + Send + Sync,
 {
     fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<T>, E>;
     fn apply_delta(&mut self, delta: OperationDelta<T>) -> Result<Mutation<T, T>, E>;
