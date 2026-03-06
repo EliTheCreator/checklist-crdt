@@ -29,11 +29,6 @@ pub enum Operation {
         head_id: Uuid,
         completed: bool,
     },
-    Deletion {
-        id: Uuid,
-        history: EventTree,
-        head_id: Uuid,
-    },
 }
 
 impl Operation {
@@ -44,7 +39,6 @@ impl Operation {
             NameUpdate { id, .. } => id,
             DescriptionUpdate { id, .. } => id,
             CompletedUpdate { id, .. } => id,
-            Deletion { id, .. } => id,
         }
     }
 
@@ -55,7 +49,6 @@ impl Operation {
             NameUpdate { history, .. } => history,
             DescriptionUpdate { history, .. } => history,
             CompletedUpdate { history, .. } => history,
-            Deletion { history, .. } => history,
         }
     }
 
@@ -66,7 +59,6 @@ impl Operation {
             NameUpdate { head_id, .. } => head_id,
             DescriptionUpdate { head_id, .. } => head_id,
             CompletedUpdate { head_id, .. } => head_id,
-            Deletion { head_id, .. } => head_id,
         }
     }
 }

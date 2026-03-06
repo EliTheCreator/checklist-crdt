@@ -158,7 +158,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             CompletedUpdate { completed, ..} => {
                 vec![completed.clone() as u8,]
             },
-            Deletion { .. }  => Vec::new(),
         }
     }
 
@@ -169,7 +168,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             NameUpdate { .. } => 1,
             DescriptionUpdate { .. } => 2,
             CompletedUpdate { .. } => 3,
-            Deletion { .. } => 4,
         }
     }
 
@@ -191,7 +189,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             CheckedUpdate { checked, ..} => {
                 vec![checked.clone() as u8,]
             },
-            Deletion { .. }  => Vec::new(),
         }
     }
 
@@ -202,7 +199,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             NameUpdate { .. } => 1,
             PositionUpdate { .. } => 2,
             CheckedUpdate { .. } => 3,
-            Deletion { .. } => 4,
         }
     }
 
@@ -313,12 +309,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
 
                 Ok(head::Operation::CompletedUpdate { id, history, head_id, completed })
             },
-            4 => {
-                let head_id = associated_id
-                    .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
-
-                Ok(head::Operation::Deletion { id, history, head_id })
-            },
             _ => bail!(StorageError::data_decode("encountered unknown head operation kind"))
         }
     }
@@ -416,9 +406,6 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                 let checked = *checked == 1;
 
                 Ok(item::Operation::CheckedUpdate { id, history, item_id: associated_id, checked })
-            },
-            4 => {
-                Ok(item::Operation::Deletion { id, history, item_id: associated_id })
             },
             _ => bail!(StorageError::data_decode("encountered unknown item operation kind"))
         }

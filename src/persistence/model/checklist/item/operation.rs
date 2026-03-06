@@ -30,11 +30,6 @@ pub enum Operation {
         item_id: Uuid,
         checked: bool,
     },
-    Deletion {
-        id: Uuid,
-        history: EventTree,
-        item_id: Uuid,
-    },
 }
 
 impl Operation {
@@ -45,7 +40,6 @@ impl Operation {
             NameUpdate { id, .. } => id,
             PositionUpdate { id, .. } => id,
             CheckedUpdate { id, .. } => id,
-            Deletion { id, .. } => id,
         }
     }
 
@@ -56,7 +50,6 @@ impl Operation {
             NameUpdate { history, .. } => history,
             PositionUpdate { history, .. } => history,
             CheckedUpdate { history, .. } => history,
-            Deletion { history, .. } => history,
         }
     }
 
@@ -67,7 +60,6 @@ impl Operation {
             NameUpdate { item_id, .. } => item_id,
             PositionUpdate { item_id, .. } => item_id,
             CheckedUpdate { item_id, .. } => item_id,
-            Deletion { item_id, .. } => item_id,
         }
     }
 }

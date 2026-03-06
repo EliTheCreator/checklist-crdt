@@ -60,7 +60,6 @@ impl TombstoneBuilder {
             NameUpdate { name, .. } => { self.name = Some(name.clone()) },
             PositionUpdate { position, .. } => { self.position = Some(position.clone()) },
             CheckedUpdate { checked, .. } => { self.checked = Some(checked.clone()) },
-            Deletion { .. } => (),
         };
 
         Ok(self)

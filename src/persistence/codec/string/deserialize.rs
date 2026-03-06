@@ -203,13 +203,6 @@ impl Parser {
         Ok(head::Operation::CompletedUpdate { id, history, head_id, completed })
     }
 
-    fn parse_head_deletion(iter: &mut Split<'_, &str>) -> Result<head::Operation, ParserError> {
-        let (id, history) = Self::parse_operation_meta(iter)?;
-        let head_id = Self::parse_uuid(iter, "head id")?;
-
-        Ok(head::Operation::Deletion { id, history, head_id })
-    }
-
     fn parse_head_tombstone(iter: &mut Split<'_, &str>) -> Result<head::Tombstone, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let head_id = Self::parse_uuid(iter, "head id")?;
@@ -263,13 +256,6 @@ impl Parser {
         Ok(item::Operation::CheckedUpdate { id, history, item_id, checked })
     }
 
-    fn parse_item_deletion(iter: &mut Split<'_, &str>) -> Result<item::Operation, ParserError> {
-        let (id, history) = Self::parse_operation_meta(iter)?;
-        let item_id = Self::parse_uuid(iter, "item id")?;
-
-        Ok(item::Operation::Deletion { id, history, item_id })
-    }
-
     fn parse_item_tombstone(iter: &mut Split<'_, &str>) -> Result<item::Tombstone, ParserError> {
         let (id, history) = Self::parse_operation_meta(iter)?;
         let item_id = Self::parse_uuid(iter, "item id")?;
@@ -297,7 +283,6 @@ impl TryFrom<&str> for head::Operation {
             Some("NameUpdate") => Parser::parse_head_name_update(&mut parts),
             Some("DescriptionUpdate") => Parser::parse_head_description_update(&mut parts),
             Some("CompletedUpdate") => Parser::parse_head_completed_update(&mut parts),
-            Some("Deletion") => Parser::parse_head_deletion(&mut parts),
             Some(prefix) => Err(ParserError::invalid_prefix(format!("unexpected prefix '{}'", prefix))),
             None => Err(ParserError::no_data("no text found")),
         }
@@ -341,7 +326,6 @@ impl TryFrom<&str> for item::Operation {
             Some("NameUpdate") => Parser::parse_item_name_update(&mut parts),
             Some("PositionUpdate") => Parser::parse_item_position_update(&mut parts),
             Some("CheckedUpdate") => Parser::parse_item_checked_update(&mut parts),
-            Some("Deletion") => Parser::parse_item_deletion(&mut parts),
             Some(prefix) => Err(ParserError::invalid_prefix(format!("unexpected prefix '{}'", prefix))),
             None => Err(ParserError::no_data("no text found")),
         }

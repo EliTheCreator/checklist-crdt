@@ -61,7 +61,6 @@ impl TombstoneBuilder {
             NameUpdate { name, ..  } => { self.name = Some(name.clone()) },
             DescriptionUpdate { description, .. } => { self.description = description.clone() },
             CompletedUpdate { completed, .. } => { self.completed = Some(completed.clone()) },
-            Deletion { .. } => (),
         };
 
         Ok(self)

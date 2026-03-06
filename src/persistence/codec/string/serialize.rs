@@ -48,14 +48,6 @@ impl Into<String> for &head::Operation {
                     completed,
                 )
             },
-            Deletion { id, history, head_id } => {
-                format!(
-                    "Deletion {} {} {}\n",
-                    id,
-                    history,
-                    head_id,
-                )
-            },
         }
     }
 }
@@ -133,14 +125,6 @@ impl Into<String> for &item::Operation {
                     history,
                     item_id,
                     checked,
-                )
-            },
-            Deletion { id, history, item_id } => {
-                format!(
-                    "Deletion {} {} {}\n",
-                    id,
-                    history,
-                    item_id,
                 )
             },
         }

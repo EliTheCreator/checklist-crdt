@@ -128,8 +128,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
                 (Creation { .. }, Creation { .. })
                 | (NameUpdate { .. }, NameUpdate { .. })
                 | (DescriptionUpdate { .. }, DescriptionUpdate { .. })
-                | (CompletedUpdate { .. }, CompletedUpdate { .. })
-                | (Deletion { .. }, Deletion { .. }) => {
+                | (CompletedUpdate { .. }, CompletedUpdate { .. }) => {
                     match assoc_op.history().partial_cmp(operation.history()) {
                         Some(Ordering::Less) => obsolete_ops.push(assoc_op),
                         None if assoc_op.id() < operation.id() => obsolete_ops.push(assoc_op),
@@ -307,8 +306,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
                 (Creation { .. }, Creation { .. })
                 | (NameUpdate { .. }, NameUpdate { .. })
                 | (PositionUpdate { .. }, PositionUpdate { .. })
-                | (CheckedUpdate { .. }, CheckedUpdate { .. })
-                | (Deletion { .. }, Deletion { .. }) => {
+                | (CheckedUpdate { .. }, CheckedUpdate { .. }) => {
                     match assoc_op.history().partial_cmp(operation.history()) {
                         Some(Ordering::Less) => obsolete_ops.push(assoc_op),
                         None if assoc_op.id() < operation.id() => obsolete_ops.push(assoc_op),
