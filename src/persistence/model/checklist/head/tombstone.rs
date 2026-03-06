@@ -1,6 +1,7 @@
 use core::error::Error;
 use core::fmt::{Display, Formatter};
 
+use exn::{bail, Result};
 use itc::EventTree;
 use uuid::Uuid;
 
@@ -10,7 +11,7 @@ use super::Operation;
 pub struct TombstoneBuilder {
     id: Uuid,
     history: EventTree,
-    head_id: Option<Uuid>,
+    pub head_id: Uuid,
     template_id: Option<Uuid>,
     name: Option<String>,
     description: Option<String>,
@@ -18,11 +19,11 @@ pub struct TombstoneBuilder {
 }
 
 impl TombstoneBuilder {
-    pub fn new(id: Uuid, history: EventTree) -> Self {
+    pub fn new(id: Uuid, history: EventTree, head_id: &Uuid) -> Self {
         Self {
             id,
             history,
-            head_id: None,
+            head_id: head_id.clone(),
             template_id: None,
             name: None,
             description: None,
@@ -30,16 +31,27 @@ impl TombstoneBuilder {
         }
     }
 
-    pub fn new_from(id: Uuid, history: EventTree, operation: &Operation) -> Self {
-        let builder = Self::new(id, history);
+    pub fn new_from(
+        id: Uuid,
+        history: EventTree,
+        operation: &Operation
+    ) -> Result<Self, TombstoneBuilderError> {
+        let builder = Self::new(id, history, operation.head_id());
         builder.apply(operation)
     }
 
-    pub fn apply(mut self, operation: &Operation) -> Self {
+    pub fn apply(mut self, operation: &Operation) -> Result<Self, TombstoneBuilderError> {
+        if &self.head_id != operation.head_id() {
+            bail!(TombstoneBuilderError::head_id_mismatch(format!(
+                "head id '{}' does not match expected head id '{}'",
+                operation.head_id(),
+                self.head_id,
+            )))
+        }
+
         use Operation::*;
         match operation {
-            Creation { id, template_id, name, description, .. } => {
-                self.head_id.get_or_insert(id.clone());
+            Creation { template_id, name, description, .. } => {
                 self.template_id = self.template_id.or(template_id.clone());
                 self.name.get_or_insert(name.clone());
                 if self.description.is_none() {
@@ -52,37 +64,60 @@ impl TombstoneBuilder {
             Deletion { .. } => (),
         };
 
-        self
+        Ok(self)
     }
 
     pub fn build(self) -> Result<Tombstone, TombstoneBuilderError> {
         Ok(Tombstone {
             id: self.id,
             history: self.history,
-            head_id: self.head_id.ok_or(TombstoneBuilderError::new("head_id"))?,
+            head_id: self.head_id,
             template_id: self.template_id,
-            name: self.name.ok_or(TombstoneBuilderError::new("name"))?,
+            name: self.name.ok_or(TombstoneBuilderError::missing_field("name"))?,
             description: self.description,
-            completed: self.completed.ok_or(TombstoneBuilderError::new("completed"))?,
+            completed: self.completed.ok_or(TombstoneBuilderError::missing_field("completed"))?,
         })
     }
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorKind {
+    HeadIdMismatch,
+    MissingField,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TombstoneBuilderError {
-    missing_field: String,
+    pub kind: ErrorKind,
+    pub message: String,
 }
 
 impl TombstoneBuilderError {
-    pub fn new(missing_field: impl Into<String>) -> Self {
-        Self { missing_field: missing_field.into() }
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self { kind, message: message.into() }
+    }
+
+    pub fn head_id_mismatch(message: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::HeadIdMismatch, message: message.into() }
+    }
+
+    pub fn missing_field(message: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::MissingField, message: message.into() }
     }
 }
 
 impl Display for TombstoneBuilderError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "tombstone builder error: missing value for {} field", self.missing_field)
+        use self::ErrorKind::*;
+        match self.kind {
+            HeadIdMismatch => {
+                write!(f, "head tombstone builder error: {}", self.message)
+            },
+            MissingField => {
+                write!(f, "head tombstone builder error: missing value for '{}' field", self.message)
+            },
+        }
     }
 }
 

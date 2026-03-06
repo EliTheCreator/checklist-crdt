@@ -51,7 +51,7 @@ impl ChecklistOperations {
 }
 
 
-type SingleMutation<T> = Mutation<Option<T>, Vec<T>>;
+type SingleMutation<T, U> = Mutation<Option<T>, Vec<U>>;
 type MultiMutation<T> = Mutation<T, T>;
 
 
@@ -111,7 +111,10 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         }
     }
 
-    fn save_head_operation(&mut self, operation: head::Operation) -> Result<SingleMutation<head::Operation>, CrdtError> {
+    fn save_head_operation(
+        &mut self,
+        operation: head::Operation
+    ) -> Result<SingleMutation<head::Operation, head::Operation>, CrdtError> {
         let associated_operations = self.storage
             .load_associated_head_operations(operation.head_id())
             .map_err(|e|
@@ -149,9 +152,50 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         Ok(Mutation::new(Some(operation_clone), obsolete_ops))
     }
 
+    fn save_head_tombstone(
+        &mut self,
+        mut tombstone_builder: head::TombstoneBuilder
+    ) -> Result<SingleMutation<head::Tombstone, head::Operation>, CrdtError> {
+        let obsolete_ops = self.storage
+            .load_associated_head_operations(&tombstone_builder.head_id)
+            .map_err(|e|
+                self.abort_transaction(e, "crdt unable to load associated head operations")
+            )?;
+
+        for obsolete_op in obsolete_ops.iter() {
+            tombstone_builder = tombstone_builder.apply(obsolete_op)
+                .or_raise(|| CrdtError::recoverable("crdt unable to build tombstone"))?;
+        }
+
+        let tombstone = tombstone_builder.build()
+            .map_err(|e|
+                self.abort_transaction(
+                    e.raise(StorageError::backend_specific("crdt unable to build tombstone")),
+                    "crdt unable to build head tombstone"
+                )
+            )?;
+
+        let obsolete_ops = obsolete_ops.into_iter()
+            .map(|obsolete_op| self.erase_head_operation(obsolete_op.id()))
+            .collect::<Result<Vec<head::Operation>, CrdtError>>()?;
+
+        self.storage.save_head_tombstone(tombstone.clone())
+            .map_err(|e|
+                self.abort_transaction(e, "crdt unable to store head tombstone")
+            )?;
+
+        Ok(SingleMutation::new(Some(tombstone), obsolete_ops))
+    }
+
     fn erase_head_operation(&mut self, id: &Uuid) -> Result<head::Operation, CrdtError> {
         self.storage.erase_head_operation(&id).map_err(|e|
             self.abort_transaction(e, "crdt unable to erase head operation")
+        )
+    }
+
+    fn erase_head_tombstone(&mut self, id: &Uuid) -> Result<head::Tombstone, CrdtError> {
+        self.storage.erase_head_tombstone(&id).map_err(|e|
+            self.abort_transaction(e, "crdt unable to erase head tombstone")
         )
     }
 
@@ -160,7 +204,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         template_id: Option<Uuid>,
         name: String,
         description: Option<String>
-    ) -> Result<SingleMutation<head::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<head::Operation, head::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let id = Uuid::now_v7();
         let operation = head::Operation::Creation {
@@ -178,7 +222,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         head_id: &Uuid,
         name: String,
-    ) -> Result<SingleMutation<head::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<head::Operation, head::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = head::Operation::NameUpdate {
             id: Uuid::now_v7(),
@@ -194,7 +238,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         head_id: &Uuid,
         description: Option<String>,
-    ) -> Result<SingleMutation<head::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<head::Operation, head::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = head::Operation::DescriptionUpdate {
             id: Uuid::now_v7(),
@@ -210,7 +254,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         head_id: &Uuid,
         completed: bool,
-    ) -> Result<SingleMutation<head::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<head::Operation, head::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = head::Operation::CompletedUpdate {
             id: Uuid::now_v7(),
@@ -225,23 +269,31 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     pub fn delete_head(
         &mut self,
         head_id: &Uuid,
-    ) -> Result<SingleMutation<head::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<head::Tombstone, head::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
-        let operation = head::Operation::Deletion {
-            id: Uuid::now_v7(),
-            history: stamp.history(),
-            head_id: head_id.clone(),
-        };
+        let tombstone_builder = head::TombstoneBuilder::new(
+            Uuid::now_v7(),
+            stamp.history(),
+            head_id,
+        );
 
-        transaction!(self, stamp, { self.save_head_operation(operation) })
+        transaction!(self, stamp, { self.save_head_tombstone(tombstone_builder) })
     }
 
-    pub fn get_heads(&mut self) -> Result<Vec<head::Operation>, CrdtError> {
+    pub fn get_head_operations(&mut self) -> Result<Vec<head::Operation>, CrdtError> {
         self.storage.load_head_operations()
             .or_raise(|| CrdtError::recovered("crdt unable to load all head operations"))
     }
 
-    fn save_item_operation(&mut self, operation: item::Operation) -> Result<SingleMutation<item::Operation>, CrdtError> {
+    pub fn get_head_tombstones(&mut self) -> Result<Vec<head::Tombstone>, CrdtError> {
+        self.storage.load_head_tombstones()
+            .or_raise(|| CrdtError::recovered("crdt unable to load all head tombstones"))
+    }
+
+    fn save_item_operation(
+        &mut self,
+        operation: item::Operation
+    ) -> Result<SingleMutation<item::Operation, item::Operation>, CrdtError> {
         let associated_operations = self.storage
             .load_associated_item_operations(operation.item_id())
             .map_err(|e|
@@ -279,9 +331,50 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         Ok(Mutation::new(Some(operation_clone), obsolete_ops))
     }
 
+    fn save_item_tombstone(
+        &mut self,
+        mut tombstone_builder: item::TombstoneBuilder
+    ) -> Result<SingleMutation<item::Tombstone, item::Operation>, CrdtError> {
+        let obsolete_ops = self.storage
+            .load_associated_item_operations(&tombstone_builder.item_id)
+            .map_err(|e|
+                self.abort_transaction(e, "crdt unable to load associated item operations")
+            )?;
+
+        for obsolete_op in obsolete_ops.iter() {
+            tombstone_builder = tombstone_builder.apply(obsolete_op)
+                .or_raise(|| CrdtError::recoverable("crdt unable to build tombstone"))?;
+        }
+
+        let tombstone = tombstone_builder.build()
+            .map_err(|e|
+                self.abort_transaction(
+                    e.raise(StorageError::backend_specific("crdt unable to build tombstone")),
+                    "crdt unable to build item tombstone"
+                )
+            )?;
+
+        let obsolete_ops = obsolete_ops.into_iter()
+            .map(|obsolete_op| self.erase_item_operation(obsolete_op.id()))
+            .collect::<Result<Vec<item::Operation>, CrdtError>>()?;
+
+        self.storage.save_item_tombstone(tombstone.clone())
+            .map_err(|e|
+                self.abort_transaction(e, "crdt unable to store item tombstone")
+            )?;
+
+        Ok(SingleMutation::new(Some(tombstone), obsolete_ops))
+    }
+
     fn erase_item_operation(&mut self, id: &Uuid) -> Result<item::Operation, CrdtError> {
         self.storage.erase_item_operation(id).map_err(|e|
             self.abort_transaction(e, "crdt unable to erase item operation")
+        )
+    }
+
+    fn erase_item_tombstone(&mut self, id: &Uuid) -> Result<item::Tombstone, CrdtError> {
+        self.storage.erase_item_tombstone(id).map_err(|e|
+            self.abort_transaction(e, "crdt unable to erase item tombstone")
         )
     }
 
@@ -290,7 +383,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         head_id: Uuid,
         name: String,
         position: FractionalIndex,
-    ) -> Result<SingleMutation<item::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<item::Operation, item::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let id = Uuid::now_v7();
         let operation = item::Operation::Creation {
@@ -308,7 +401,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         item_id: &Uuid,
         name: String,
-    ) -> Result<SingleMutation<item::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<item::Operation, item::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = item::Operation::NameUpdate {
             id: Uuid::now_v7(),
@@ -324,7 +417,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         item_id: &Uuid,
         position: FractionalIndex,
-    ) -> Result<SingleMutation<item::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<item::Operation, item::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = item::Operation::PositionUpdate {
             id: Uuid::now_v7(),
@@ -340,7 +433,7 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
         &mut self,
         item_id: &Uuid,
         checked: bool,
-    ) -> Result<SingleMutation<item::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<item::Operation, item::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
         let operation = item::Operation::CheckedUpdate {
             id: Uuid::now_v7(),
@@ -355,26 +448,31 @@ impl<S: for<'a> Store<'a>> ChecklistCrdt<S> {
     pub fn delete_item(
         &mut self,
         item_id: &Uuid,
-    ) -> Result<SingleMutation<item::Operation>, CrdtError> {
+    ) -> Result<SingleMutation<item::Tombstone, item::Operation>, CrdtError> {
         let stamp = self.itc_stamp.event();
-        let operation: item::Operation = item::Operation::Deletion {
-            id: Uuid::now_v7(),
-            history: stamp.history(),
-            item_id: item_id.clone(),
-        };
+        let tombstone_builder = item::TombstoneBuilder::new(
+            Uuid::now_v7(),
+            stamp.history(),
+            item_id,
+        );
 
-        transaction!(self, stamp, { self.save_item_operation(operation) })
+        transaction!(self, stamp, { self.save_item_tombstone(tombstone_builder) })
     }
 
-    pub fn get_items(&mut self) -> Result<Vec<item::Operation>, CrdtError> {
+    pub fn get_item_operations(&mut self) -> Result<Vec<item::Operation>, CrdtError> {
         self.storage.load_item_operations()
             .or_raise(|| CrdtError::recovered("crdt unable to load all item operations"))
+    }
+
+    pub fn get_item_tombstones(&mut self) -> Result<Vec<item::Tombstone>, CrdtError> {
+        self.storage.load_item_tombstones()
+            .or_raise(|| CrdtError::recovered("crdt unable to load all item tombstones"))
     }
 }
 
 impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
     fn get_delta_since(&mut self, history: EventTree) -> Result<OperationDelta<ChecklistOperations>, CrdtError> {
-        let mut head_operations = self.get_heads()?;
+        let mut head_operations = self.get_head_operations()?;
         head_operations.retain(|head| {
             match history.partial_cmp(head.history()) {
                 Some(ordering) => ordering == Ordering::Less,
@@ -382,7 +480,7 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
             }
         });
 
-        let mut item_operations = self.get_items()?;
+        let mut item_operations = self.get_item_operations()?;
         item_operations.retain(|item| {
             match history.partial_cmp(item.history()) {
                 Some(ordering) => ordering == Ordering::Less,
@@ -414,8 +512,8 @@ impl<S: for<'a> Store<'a>> Crdt<ChecklistOperations, CrdtError> for ChecklistCrd
 
     fn fork(&mut self) -> Result<ReplicaState<ChecklistOperations>, CrdtError> {
         let (stamp, replica_stamp) = self.itc_stamp.fork();
-        let head_operations = self.get_heads()?;
-        let item_operations = self.get_items()?;
+        let head_operations = self.get_head_operations()?;
+        let item_operations = self.get_item_operations()?;
 
         transaction!(self, stamp, { Ok(()) })?;
         let operations = ChecklistOperations::new(head_operations, item_operations);
