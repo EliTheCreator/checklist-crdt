@@ -482,6 +482,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         let query = format!("
             SELECT id, history, secondary_id, variant, payload
             FROM {table_name}
+            ORDER BY id ASC;
         ");
 
         execute!(self, sqlx::query(&query), fetch_all)
@@ -513,6 +514,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
             SELECT id, history, secondary_id, variant, payload
             FROM {table_name}
             WHERE id = ? OR secondary_id = ?
+            ORDER BY id ASC;
         ");
         let query = sqlx::query(&query_text)
             .bind(associated_id.as_bytes().as_slice())
@@ -611,11 +613,6 @@ impl<'a, B: BlockOn> Store for SqliteStorage<'a, B> {
 
         let _ = execute!(self, query, execute)
             .or_raise(|| StorageError::backend_write("failed to save stamp"))?;
-        // let _ = self.executor.block_on(async {
-        //         let mut connection = self.sqlite_pool.acquire().await.unwrap();
-        //         query.execute(&mut *connection).await
-        //     })
-        //     .or_raise(|| StorageError::backend_write("failed to save stamp"))?;
 
         Ok(())
     }
@@ -692,9 +689,10 @@ impl<'a, B: BlockOn> Store for SqliteStorage<'a, B> {
 
     fn load_head_tombstones(&mut self) -> Result<Vec<head::Tombstone>, StorageError> {
         let query_text = format!("
-                SELECT id, history, head_id, template_id, name, description, completed
-                FROM {HEAD_TOMBSTONE_TABLE}
-            ");
+            SELECT id, history, head_id, template_id, name, description, completed
+            FROM {HEAD_TOMBSTONE_TABLE}
+            ORDER BY id ASC;
+        ");
 
         execute!(self, sqlx::query(&query_text), fetch_all)
             .or_raise(|| StorageError::backend_read(
@@ -714,6 +712,7 @@ impl<'a, B: BlockOn> Store for SqliteStorage<'a, B> {
             SELECT id, history, head_id, template_id, name, description, completed
             FROM {HEAD_TOMBSTONE_TABLE}
             WHERE head_id = ?
+            ORDER BY id ASC;
         ");
         let query = sqlx::query(&query_text)
             .bind(head_id.as_bytes().as_slice());
@@ -775,12 +774,12 @@ impl<'a, B: BlockOn> Store for SqliteStorage<'a, B> {
 
     fn save_item_tombstone(&mut self, tombstone: item::Tombstone) -> Result<(), StorageError> {
         let query_text = format!("
-            INSERT INTO {HEAD_TOMBSTONE_TABLE}
+            INSERT INTO {ITEM_TOMBSTONE_TABLE}
             (id, history, head_id, item_id, name, position, checked)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO NOTHING
         ");
-        let query = sqlx::query(&&query_text)
+        let query = sqlx::query(&query_text)
             .bind(tombstone.id.as_bytes().as_slice())
             .bind(Into::<Box<[u8]>>::into(tombstone.history))
             .bind(tombstone.head_id.as_bytes().as_slice())
@@ -805,6 +804,7 @@ impl<'a, B: BlockOn> Store for SqliteStorage<'a, B> {
         let query_text = format!("
             SELECT id, history, head_id, item_id, name, position, checked
             FROM {ITEM_TOMBSTONE_TABLE}
+            ORDER BY id ASC;
         ");
 
         execute!(self, sqlx::query(&query_text), fetch_all)
@@ -825,6 +825,7 @@ impl<'a, B: BlockOn> Store for SqliteStorage<'a, B> {
             SELECT id, history, head_id, item_id, name, position, checked
             FROM {ITEM_TOMBSTONE_TABLE}
             WHERE item_id = ?
+            ORDER BY id ASC;
         ");
         let query = sqlx::query(&query_text)
             .bind(item_id.as_bytes().as_slice());
