@@ -634,6 +634,14 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
             let mut add_head_tombstones = Vec::new();
             let mut remove_head_tombstones = Vec::new();
             for tombstone in replica_state.delta.operations.head_tombstones {
+                let associated_heads = self.storage.load_associated_head_operations(&tombstone.head_id)
+                    .or_raise(|| CrdtError::recovered("crdt unable to load all associated head operations"))?;
+                for head in associated_heads {
+                    self.storage.erase_head_operation(head.id())
+                        .or_raise(|| CrdtError::recovered("crdt unable to erase associated head operation"))?;
+                    remove_head_operations.push(head);
+                }
+
                 let (add, remove) = self.save_head_tombstone(tombstone)?.destruct();
                 add_head_tombstones.push(add);
                 remove_head_tombstones.extend(remove);
@@ -650,6 +658,14 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
             let mut add_item_tombstones = Vec::new();
             let mut remove_item_tombstones = Vec::new();
             for tombstone in replica_state.delta.operations.item_tombstones {
+                let associated_items = self.storage.load_associated_item_operations(&tombstone.item_id)
+                    .or_raise(|| CrdtError::recovered("crdt unable to load all associated item operations"))?;
+                for item in associated_items {
+                    self.storage.erase_item_operation(item.id())
+                        .or_raise(|| CrdtError::recovered("crdt unable to erase associated item operation"))?;
+                    remove_item_operations.push(item);
+                }
+
                 let (add, remove) = self.save_item_tombstone(tombstone)?.destruct();
                 add_item_tombstones.push(add);
                 remove_item_tombstones.extend(remove);
@@ -867,6 +883,7 @@ mod test {
         crdt_2.update_item_checked(&second, true).unwrap();
         crdt_2.update_item_name(&second, "3.2".into()).unwrap();
         crdt_1.update_item_name(&second, "3.1".into()).unwrap();
+        crdt_1.delete_item(&first).unwrap();
 
         let delta_1_2 = crdt_1.get_delta_since(crdt_2.itc_stamp.history()).unwrap();
         let delta_2_1 = crdt_2.get_delta_since(crdt_1.itc_stamp.history()).unwrap();
