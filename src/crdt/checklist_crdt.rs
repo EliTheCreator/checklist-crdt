@@ -106,12 +106,8 @@ impl<S: Store> ChecklistCrdt<S> {
         let success_text = format!("{text}. all operations have been reverted");
         let failure_text = format!("{text}. unable to reverse all operations. crdt is in inconsistent state");
         match self.storage.abort_transaction() {
-            Ok(_) => {
-                e1.raise(CrdtError::recovered(success_text))
-            },
-            Err(e2) => {
-                Exn::raise_all(CrdtError::fatal(failure_text), vec![e1, e2])
-            },
+            Ok(_) => e1.raise(CrdtError::recovered(success_text)),
+            Err(e2) => Exn::raise_all(CrdtError::fatal(failure_text), vec![e1, e2]),
         }
     }
 
@@ -693,7 +689,7 @@ impl<S: Store> Crdt<ChecklistOperations, CrdtError> for ChecklistCrdt<S> {
 #[cfg(test)]
 mod test {
     use super::*;
-    
+
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use tokio::runtime::Runtime;
     use std::{future::Future, str::FromStr};
@@ -841,18 +837,20 @@ mod test {
     #[test]
     fn join_in_sqlite_stored_replicas() {
         let executor = TokioBlockOn::new();
-        let sql_connection_options_1 = SqliteConnectOptions::from_str("sqlite::memory:1").unwrap();
-        let sql_connection_options_1 = sql_connection_options_1.in_memory(true)
-            .shared_cache(true);
 
+        let sql_connection_options_1 = SqliteConnectOptions::from_str("sqlite::memory:1")
+            .unwrap()
+            .in_memory(true)
+            .shared_cache(true);
         let mut sqlite_pool_1 = executor
             .block_on(SqlitePoolOptions::new().max_connections(1).connect_with(sql_connection_options_1))
             .unwrap();
 
         let storage_1 = SqliteStorage::new(&mut sqlite_pool_1, &executor).unwrap();
 
-        let sql_connection_options_2 = SqliteConnectOptions::from_str("sqlite::memory:2").unwrap();
-        let sql_connection_options_2 = sql_connection_options_2.in_memory(true)
+        let sql_connection_options_2 = SqliteConnectOptions::from_str("sqlite::memory:2")
+            .unwrap()
+            .in_memory(true)
             .shared_cache(true);
         let mut sqlite_pool_2 = executor
             .block_on(SqlitePoolOptions::new().max_connections(1).connect_with(sql_connection_options_2))
