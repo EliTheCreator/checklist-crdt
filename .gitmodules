@@ -1,3 +1,0 @@
-[submodule "crates/itc"]
-	path = crates/itc
-	url = git@github.com:EliTheCreator/itc.git
