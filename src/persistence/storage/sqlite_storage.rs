@@ -205,7 +205,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         }
     }
 
-    fn usize_from_payload(payload: &[u8]) -> (usize, usize) {
+    fn u8_slice_to_usize(payload: &[u8]) -> (usize, usize) {
         let mask: u8 = (1<<7) - 1;
         let mut bytes = 0;
         let mut num = 0;
@@ -223,92 +223,134 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
         (bytes, num)
     }
 
+    fn u8_slice_to_string(slice: &[u8]) -> Result<(usize, String), StorageError> {
+        let (offset, length) = Self::u8_slice_to_usize(slice);
+        let string_slice = slice.get(offset..(offset+length))
+            .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
+        let string = String::from_utf8(string_slice.to_vec())
+            .or_raise(|| StorageError::data_decode("unable to convert from [u8] to String"))?;
+
+        Ok((offset+length, string))
+    }
+
+    fn u8_slice_to_optional_string(slice: &[u8]) -> Result<(usize, Option<String>), StorageError> {
+        let (length, string) = Self::u8_slice_to_string(slice)?;
+        Ok((length, if string.len()>0 { Some(string) } else { None }))
+    }
+
+    fn u8_slice_to_bool(slice: &[u8]) -> Result<(usize, bool), StorageError> {
+        let value = slice.get(0)
+            .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
+        Ok((1, *value == 1))
+    }
+
+    fn sqlite_column_to_uuid(row: &SqliteRow, column_name: &str) -> Result<Uuid, StorageError> {
+        let uuid_bytes: &[u8] = row.try_get(column_name)
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to retrieve '{column_name}' field"
+            )))?;
+        Uuid::from_slice(uuid_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode Uuid"))
+    }
+
+    fn sqlite_column_to_optional_uuid(row: &SqliteRow, column_name: &str) -> Result<Option<Uuid>, StorageError> {
+        let uuid_bytes: &[u8] = row.try_get(column_name)
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to retrieve '{column_name}' field"
+            )))?;
+
+        if uuid_bytes.len() == 0 {
+            return Ok(None);
+        }
+
+        let id = Uuid::from_slice(uuid_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode Uuid"))?;
+
+        Ok(Some(id))
+    }
+
+    fn sqlite_column_to_history(row: &SqliteRow, column_name: &str) -> Result<EventTree, StorageError> {
+        let history_bytes: &[u8] = row.try_get(column_name)
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to retrieve '{column_name}' field"
+            )))?;
+        EventTree::try_from(history_bytes)
+            .or_raise(|| StorageError::data_decode("unable to decode EventTree"))
+    }
+
+    fn sqlite_column_to_string(row: &SqliteRow, column_name: &str) -> Result<String, StorageError> {
+        row.try_get(column_name)
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to retrieve '{column_name}' field"
+            )))
+    }
+
+    fn sqlite_column_to_optional_string(row: &SqliteRow, column_name: &str) -> Result<Option<String>, StorageError> {
+        row.try_get(column_name)
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to retrieve '{column_name}' field"
+            )))
+    }
+
+    fn sqlite_column_to_position(row: &SqliteRow, column_name: &str) -> Result<FractionalIndex, StorageError> {
+        let position_bytes = row.try_get(column_name)
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to retrieve '{column_name}' field"
+            )))?;
+
+        Ok(FractionalIndex::from_bytes(position_bytes))
+    }
+
+    fn sqlite_column_to_bool(row: &SqliteRow, column_name: &str) -> Result<bool, StorageError> {
+        row.try_get(column_name)
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to retrieve '{column_name}' field"
+            )))
+    }
+
+    fn sqlite_column_to_u8(row: &SqliteRow, column_name: &str) -> Result<u8, StorageError> {
+        row.try_get(column_name)
+            .or_raise(|| StorageError::backend_specific(format!(
+                "failed to retrieve '{column_name}' field"
+            )))
+    }
+
     fn sqlite_row_to_head_operation(row: SqliteRow) -> Result<head::Operation, StorageError> {
-        let id_bytes: &[u8] = row.try_get("id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
-        let id = Uuid::from_slice(id_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
-
-        let history_bytes: &[u8] = row.try_get("history")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'history' field"))?;
-        let history = EventTree::try_from(history_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode event tree"))?;
-
-        let variant: u8 = row.try_get("variant")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'variant' field"))?;
-
-        let associated_id_bytes: &[u8] = row.try_get("secondary_id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'associated_id' field"))?;
-        let associated_id = if associated_id_bytes.len() != 0 {
-            Some(Uuid::from_slice(associated_id_bytes)
-                .or_raise(|| StorageError::data_decode("unable to decode uuid"))?)
-        } else {
-            None
-        };
+        let id = Self::sqlite_column_to_uuid(&row, "id")?;
+        let history = Self::sqlite_column_to_history(&row, "history")?;
+        let variant = Self::sqlite_column_to_u8(&row, "variant")?;
+        let associated_id = Self::sqlite_column_to_optional_uuid(&row, "secondary_id")?;
 
         let payload: &[u8] = row.try_get("payload")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'payload' field"))?;
 
         match variant {
             0 => {
-                let (name_offset, name_length) = Self::usize_from_payload(payload);
-                let name_slice = payload.get(name_offset..(name_offset+name_length))
+                let (length, name) = Self::u8_slice_to_string(payload)?;
+                let description_slice = payload.get(length..)
                     .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
-
-                let desc_length_slice = payload.get((name_offset+name_length)..)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let (mut desc_offset, desc_length) = Self::usize_from_payload(desc_length_slice);
-                desc_offset += name_offset+name_length;
-
-                let description = if desc_length != 0 {
-                    let desc_slice = payload.get(desc_offset..(desc_length+desc_offset))
-                        .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                    Some(String::from_utf8(desc_slice.to_vec())
-                        .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?)
-                } else {
-                    None
-                };
+                let (_, description) = Self::u8_slice_to_optional_string(description_slice)?;
 
                 Ok(head::Operation::Creation { id, history, template_id: associated_id, name, description })
             },
             1 => {
                 let head_id = associated_id
                     .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
-
-                let (offset, name_length) = Self::usize_from_payload(payload);
-                let name_slice = payload.get(offset..(name_length+offset))
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
+                let (_, name) = Self::u8_slice_to_string(payload)?;
 
                 Ok(head::Operation::NameUpdate { id, history, head_id, name })
             },
             2 => {
                 let head_id = associated_id
                     .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
-
-                let (desc_offset, desc_length) = Self::usize_from_payload(payload);
-
-                let description = if desc_length != 0 {
-                    let desc_slice = payload.get(desc_offset..(desc_length+desc_offset))
-                        .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                    Some(String::from_utf8(desc_slice.to_vec())
-                        .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?)
-                } else {
-                    None
-                };
+                let (_, description) = Self::u8_slice_to_optional_string(payload)?;
 
                 Ok(head::Operation::DescriptionUpdate { id, history, head_id, description })
             },
             3 => {
                 let head_id = associated_id
                     .ok_or_raise(|| StorageError::data_decode("expected an id"))?;
-
-                let completed = payload.get(0)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let completed = *completed == 1;
+                let (_, completed) = Self::u8_slice_to_bool(payload)?;
 
                 Ok(head::Operation::CompletedUpdate { id, history, head_id, completed })
             },
@@ -317,84 +359,38 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
     }
 
     fn sqlite_row_to_head_tombstone(row: SqliteRow) -> Result<head::Tombstone, StorageError> {
-        let id_bytes: &[u8] = row.try_get("id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
-        let id = Uuid::from_slice(id_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+        let id = Self::sqlite_column_to_uuid(&row, "id")?;
+        let history = Self::sqlite_column_to_history(&row, "history")?;
+        let head_id = Self::sqlite_column_to_uuid(&row, "head_id")?;
 
-        let history_bytes: &[u8] = row.try_get("history")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'history' field"))?;
-        let history = EventTree::try_from(history_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode event tree"))?;
-
-        let head_id_bytes: &[u8] = row.try_get("head_id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'head_id' field"))?;
-        let head_id = Uuid::from_slice(head_id_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
-
-        let template_id_bytes: Option<&[u8]> = row.try_get("template_id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'template_id' field"))?;
-        let template_id = if let Some(template_id_bytes) = template_id_bytes {
-            Some(Uuid::from_slice(template_id_bytes)
-                .or_raise(|| StorageError::data_decode("unable to decode uuid"))?)
-        } else {
-            None
-        };
-
-        let name: String = row.try_get("name")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'name' field"))?;
-
-        let description: Option<String> = row.try_get("description")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'description' field"))?;
-
-        let completed: bool = row.try_get("completed")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'completed' field"))?;
+        let template_id = Self::sqlite_column_to_optional_uuid(&row, "secondary_id")?;
+        let name = Self::sqlite_column_to_string(&row, "name")?;
+        let description = Self::sqlite_column_to_optional_string(&row, "description")?;
+        let completed = Self::sqlite_column_to_bool(&row, "completed")?;
 
         Ok(head::Tombstone { id, history, head_id, template_id, name, description, completed })
     }
 
     fn sqlite_row_to_item_operation(row: SqliteRow) -> Result<item::Operation, StorageError> {
-        let id_bytes: &[u8] = row.try_get("id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
-        let id = Uuid::from_slice(id_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
-
-        let history_bytes: &[u8] = row.try_get("history")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'history' field"))?;
-        let history = EventTree::try_from(history_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode event tree"))?;
-
-        let variant: u8 = row.try_get("variant")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'variant' field"))?;
-
-        let associated_id_bytes: &[u8] = row.try_get("secondary_id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'associated_id' field"))?;
-        let associated_id = Uuid::from_slice(associated_id_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+        let id = Self::sqlite_column_to_uuid(&row, "id")?;
+        let history = Self::sqlite_column_to_history(&row, "history")?;
+        let variant = Self::sqlite_column_to_u8(&row, "variant")?;
+        let associated_id = Self::sqlite_column_to_uuid(&row, "secondary_id")?;
 
         let payload: &[u8] = row.try_get("payload")
             .or_raise(|| StorageError::backend_specific("failed to retrieve 'payload' field"))?;
 
         match variant {
             0 => {
-                let (offset, name_length) = Self::usize_from_payload(payload);
-                let name_slice = payload.get(offset..(offset+name_length))
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
-
-                let position_slice = payload.get(offset+name_length..)
+                let (length, name) = Self::u8_slice_to_string(payload)?;
+                let position_slice = payload.get(length..)
                     .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
                 let position = FractionalIndex::from_bytes(position_slice.to_vec());
 
                 Ok(item::Operation::Creation { id, history, head_id: associated_id, name, position })
             },
             1 => {
-                let (offset, name_length) = Self::usize_from_payload(payload);
-                let name_slice = payload.get(offset..(offset+name_length))
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let name = String::from_utf8(name_slice.to_vec())
-                    .or_raise(|| StorageError::data_decode("unable to convert from [u8] to string"))?;
+                let (_, name) = Self::u8_slice_to_string(payload)?;
 
                 Ok(item::Operation::NameUpdate { id, history, item_id: associated_id, name })
             },
@@ -404,9 +400,7 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
                 Ok(item::Operation::PositionUpdate { id, history, item_id: associated_id, position })
             },
             3 => {
-                let checked = payload.get(0)
-                    .ok_or_raise(|| StorageError::data_decode("unable to get enough bytes"))?;
-                let checked = *checked == 1;
+                let (_, checked) = Self::u8_slice_to_bool(payload)?;
 
                 Ok(item::Operation::CheckedUpdate { id, history, item_id: associated_id, checked })
             },
@@ -415,35 +409,14 @@ impl<'a, B: BlockOn> SqliteStorage<'a, B> {
     }
 
     fn sqlite_row_to_item_tombstone(row: SqliteRow) -> Result<item::Tombstone, StorageError> {
-        let id_bytes: &[u8] = row.try_get("id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'id' field"))?;
-        let id = Uuid::from_slice(id_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
+        let id = Self::sqlite_column_to_uuid(&row, "id")?;
+        let history = Self::sqlite_column_to_history(&row, "history")?;
+        let head_id = Self::sqlite_column_to_uuid(&row, "head_id")?;
 
-        let history_bytes: &[u8] = row.try_get("history")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'history' field"))?;
-        let history = EventTree::try_from(history_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode event tree"))?;
-
-        let head_id_bytes: &[u8] = row.try_get("head_id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'head_id' field"))?;
-        let head_id = Uuid::from_slice(head_id_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
-
-        let item_id_bytes: &[u8] = row.try_get("item_id")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'item_id' field"))?;
-        let item_id = Uuid::from_slice(item_id_bytes)
-            .or_raise(|| StorageError::data_decode("unable to decode uuid"))?;
-
-        let name: String = row.try_get("name")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'name' field"))?;
-
-        let position_bytes: &[u8] = row.try_get("position")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'position' field"))?;
-        let position = FractionalIndex::from_bytes(position_bytes.to_vec());
-
-        let checked: bool = row.try_get("checked")
-            .or_raise(|| StorageError::backend_specific("failed to retrieve 'checked' field"))?;
+        let item_id = Self::sqlite_column_to_uuid(&row, "item_id")?;
+        let name = Self::sqlite_column_to_string(&row, "name")?;
+        let position = Self::sqlite_column_to_position(&row, "position")?;
+        let checked = Self::sqlite_column_to_bool(&row, "checked")?;
 
         Ok(item::Tombstone { id, history, head_id, item_id, name, position, checked })
     }
@@ -903,8 +876,9 @@ mod tests {
     #[test]
     fn basic_in_memory_init() {
         let executor = TokioBlockOn::new();
-        let sql_connection_options = SqliteConnectOptions::from_str("sqlite::memory:").unwrap();
-        let sql_connection_options = sql_connection_options.in_memory(true);
+        let sql_connection_options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .in_memory(true);
         let mut sqlite_pool = executor
             .block_on(SqlitePool::connect_with(sql_connection_options))
             .unwrap();
